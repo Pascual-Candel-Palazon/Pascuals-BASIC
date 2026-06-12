@@ -16,6 +16,15 @@ KMSGFL  = $009D         ; flags de mensajes del kernal
 KLDTND  = $0098         ; numero de ficheros abiertos
 KDFLTN  = $0099         ; dispositivo de entrada por defecto
 KDFLTO  = $009A         ; dispositivo de salida por defecto
+KSTATUS = $0090         ; estado de E/S del kernal
+KFNLEN  = $00B7         ; longitud del nombre de fichero
+KLA     = $00B8         ; fichero logico actual
+KSA     = $00B9         ; direccion secundaria actual
+KFA     = $00BA         ; dispositivo actual
+KFNADR  = $00BB         ; puntero al nombre (2 bytes)
+KLAT    = $0259         ; tabla de ficheros logicos (10)
+KFAT    = $0263         ; tabla de dispositivos (10)
+KSAT    = $026D         ; tabla de direcciones secundarias (10)
 KPNT    = $D1           ; puntero a linea actual de pantalla (lo/hi)
 KCOL    = $D3           ; columna del cursor (0-39)
 KNDX    = $C6           ; numero de teclas en bufer
@@ -1352,6 +1361,109 @@ KCLALL:
         sta KLDTND      ; numero de ficheros abiertos = 0
         jmp KCLRCHN
 
+; ------------------------------------------------------------
+; Andamiaje de E/S (fase 1 IEC): gestion de estado, sin bus todavia.
+; ------------------------------------------------------------
+; SETNAM ($FFBD): A=longitud, X/Y=direccion del nombre
+KSETNAM:
+        sta KFNLEN
+        stx KFNADR
+        sty KFNADR+1
+        rts
+; SETLFS ($FFBA): A=fichero logico, X=dispositivo, Y=direccion secundaria
+KSETLFS:
+        sta KLA
+        stx KFA
+        sty KSA
+        rts
+; buscar el fichero logico A en la tabla LAT; C=1 y X=indice si esta,
+; C=0 si no esta
+KFINDFL:
+        ldx KLDTND
+@l:     dex
+        bmi @no
+        cmp KLAT,X
+        bne @l
+        sec
+        rts
+@no:    clc
+        rts
+; OPEN ($FFC0): registrar el fichero logico en las tablas
+KOPEN:  lda KLA
+        bne @ok0
+        lda #$06        ; error 6: fichero logico 0 no permitido
+        sec
+        rts
+@ok0:   jsr KFINDFL     ; ¿ya abierto?
+        bcc @nuevo
+        lda #$02        ; error 2: fichero ya abierto
+        sec
+        rts
+@nuevo: ldx KLDTND
+        cpx #10
+        bcc @add
+        lda #$01        ; error 1: demasiados ficheros
+        sec
+        rts
+@add:   lda KLA
+        sta KLAT,X
+        lda KFA
+        sta KFAT,X
+        lda KSA
+        sta KSAT,X
+        inc KLDTND
+        ; (fase 2: si KFA es serie, abrir el canal por el bus)
+        clc
+        rts
+; CLOSE ($FFC3): A = fichero logico a cerrar
+KCLOSE: jsr KFINDFL
+        bcs @hay
+        clc             ; no abierto: nada que hacer
+        rts
+@hay:   ; compactar las tablas desde X
+        ldy KLDTND
+        dey
+@comp:  cpx KLDTND
+        bcs @fin
+        cpx #9
+        bcs @ult
+        lda KLAT+1,X
+        sta KLAT,X
+        lda KFAT+1,X
+        sta KFAT,X
+        lda KSAT+1,X
+        sta KSAT,X
+@ult:   inx
+        cpx KLDTND
+        bcc @comp
+@fin:   dec KLDTND
+        clc
+        rts
+; CHKIN ($FFC6): X = fichero logico -> canal de entrada
+KCHKIN: txa
+        jsr KFINDFL
+        bcs @hay
+        lda #$03        ; error 3: fichero no abierto
+        sec
+        rts
+@hay:   lda KFAT,X
+        sta KDFLTN      ; dispositivo de entrada = el del fichero
+        ; (fase 2: si serie, enviar TALK + direccion secundaria)
+        clc
+        rts
+; CHKOUT ($FFC9): X = fichero logico -> canal de salida
+KCHKOUT: txa
+        jsr KFINDFL
+        bcs @hay
+        lda #$03
+        sec
+        rts
+@hay:   lda KFAT,X
+        sta KDFLTO      ; dispositivo de salida = el del fichero
+        ; (fase 2: si serie, enviar LISTEN + direccion secundaria)
+        clc
+        rts
+
 
 ; ------------------------------------------------------------
 ; SYS (delta C64): evalua la expresion con las rutinas del BASIC
@@ -1400,12 +1512,12 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KSTUB       ; $FFB1 LISTEN
         jmp KSTUB       ; $FFB4 TALK
         jmp KSTUB       ; $FFB7 READST
-        jmp KSTUB       ; $FFBA SETLFS
-        jmp KSTUB       ; $FFBD SETNAM
-        jmp KSTUB       ; $FFC0 OPEN
-        jmp KSTUB       ; $FFC3 CLOSE
-        jmp KSTUB       ; $FFC6 CHKIN
-        jmp KSTUB       ; $FFC9 CHKOUT
+        jmp KSETLFS     ; $FFBA SETLFS
+        jmp KSETNAM     ; $FFBD SETNAM
+        jmp KOPEN       ; $FFC0 OPEN
+        jmp KCLOSE      ; $FFC3 CLOSE
+        jmp KCHKIN      ; $FFC6 CHKIN
+        jmp KCHKOUT     ; $FFC9 CHKOUT
         jmp KCLRCHN     ; $FFCC CLRCHN
         jmp ($0324)     ; $FFCF CHRIN  (IBASIN)
         jmp ($0326)     ; $FFD2 CHROUT (IBSOUT)
