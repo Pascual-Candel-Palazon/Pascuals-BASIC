@@ -43,10 +43,11 @@ Leyenda:
 | Cursor parpadeante + gating KBLSW | TEST + VICE | Transparencia del IRQ verificada por diff. |
 | Scroll | TEST + MECH | El solape de copias se desnudo con el patron fila=valor. |
 | Vectores pagina 3 (IRQ) | VICE | Demo del borde arcoiris encadenado al kernal. |
-| BRK/NMI (despacho) | **GAP** | Solo la via IRQ tiene test (transparencia). BRK/NMI sin test automatico. |
-| RESTOR / VECTOR ($FF8A/$FF8D) | **GAP** | Implementados, sin test automatico. |
+| BRK/NMI (despacho) | TEST | BRK por $0316 y NMI (warm start, espuria, cartucho) con tests. |
+| RESTOR / VECTOR ($FF8A/$FF8D) | TEST | test_vectores.py: restaurar, volcar y cargar. |
 | Editor v1 (WYSIWYG) | TEST | Sobrescritura, DEL que recoge, wrap, paste. |
 | Editor v2 (line-link, nav vertical) | TEST | Editar linea listada y re-entrarla cambia el programa. |
+| Cartucho CBM80 (reset y NMI) | TEST | Salto por ($8000)/($8002) con firma; arranque normal sin ella. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria
