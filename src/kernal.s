@@ -11,6 +11,7 @@
 
 ; --- RAM propia del kernal (fuera de las zonas que usa el BASIC) ---
 KVPTR   = $C3
+KCPTR   = $FB           ; puntero ZP a la RAM de color
 KPNT    = $D1           ; puntero a linea actual de pantalla (lo/hi)
 KCOL    = $D3           ; columna del cursor (0-39)
 KNDX    = $C6           ; numero de teclas en bufer
@@ -107,8 +108,10 @@ KCLS:   ldx #$00
         sta SCREEN+$2E8,X
         inx
         bne @l1
+        lda #$0E        ; azul claro por defecto
+        sta KCOLOR
         ldx #$00
-        lda #$0E        ; azul claro para todo el color RAM
+        lda KCOLOR
 @l2:    sta COLOR,X
         sta COLOR+$100,X
         sta COLOR+$200,X
@@ -155,6 +158,12 @@ KCHROUT:
         sta KBLCNT      ; reiniciar la cadencia al teclear
 @nocur: tsx
         lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
+        ; --- ¿es un codigo de color (CTRL+1..8 / C=+1..8)? ---
+        ldx #15
+@colt:  cmp KCOLTAB,X
+        beq @setcol
+        dex
+        bpl @colt
         cmp #$0D        ; retorno de carro
         beq @jcr
         cmp #$1D        ; cursor a la derecha
@@ -177,6 +186,8 @@ KCHROUT:
 @jleft: jmp @left
 @jdel:  jmp @del
 @jcls:  jmp @cls
+@setcol: stx KCOLOR     ; X = indice de color 0..15
+        jmp @done
 @clasif:
         cmp #$20
         bcs @ok1
@@ -198,6 +209,15 @@ KCHROUT:
         sbc #$40        ; -> codigo de pantalla $00-$3F (letras = letras)
 @store: ldy KCOL
         sta (KPNT),Y
+        ; escribir el color actual en la RAM de color ($D800 = KPNT+$D400)
+        lda KPNT
+        sta KCPTR
+        lda KPNT+1
+        clc
+        adc #$D4
+        sta KCPTR+1
+        lda KCOLOR
+        sta (KCPTR),Y
         inc KCOL
         lda KCOL
         cmp #40
@@ -324,6 +344,30 @@ KSCROLL:
         sta KPNT
         lda #>(SCREEN+960)
         sta KPNT+1
+        ; --- desplazar la RAM de color igual que la pantalla ---
+        ldx #$00
+@cs1:   lda COLOR+40,X
+        sta COLOR,X
+        inx
+        bne @cs1
+@cs2:   lda COLOR+$100+40,X
+        sta COLOR+$100,X
+        inx
+        bne @cs2
+@cs3:   lda COLOR+$200+40,X
+        sta COLOR+$200,X
+        inx
+        bne @cs3
+@cs4:   lda COLOR+$300+40,X
+        sta COLOR+$300,X
+        inx
+        cpx #<(1000-40-$300)
+        bne @cs4
+        ldx #39         ; ultima fila de color = color actual
+        lda KCOLOR
+@cs5:   sta COLOR+960,X
+        dex
+        bpl @cs5
         ; desplazar la tabla de enlace una fila hacia arriba
         ldx #$00
 @shk:   lda KLNK+1,X
@@ -500,6 +544,11 @@ KEYTABS:
         .byte '+','P','L','-','>','[','@','<'
         .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
         .byte '!',$5F,$00,'"',' ',$00,'Q',$03  ; shift+2 = comillas
+
+; PETSCII de los 16 codigos de color: CTRL+1..8 (0..7), C=+1..8 (8..15)
+KCOLTAB:
+        .byte $90,$05,$1C,$9F,$9C,$1E,$1F,$9E
+        .byte $81,$95,$96,$97,$98,$99,$9A,$9B
 
 KSHIFT  = $02AB
 
@@ -780,6 +829,7 @@ KLPOS   = $02EB
 KLSTART = $02EC
 KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
+KCOLOR  = $0286         ; color actual del cursor/texto
 KLNK    = $02C0         ; tabla de enlace de lineas (25 bytes, $02C0-$02D8)
 KROW    = $02D9         ; fila del cursor 0-24
 KEDROW  = $02DA         ; fila donde empezo la entrada
