@@ -41,6 +41,30 @@ def main():
                     rojo_tras_scroll = True
     ok &= caso("el scroll preserva el color (texto rojo)", rojo_tras_scroll)
 
+
+    # el cursor parpadea con el color actual y restaura al apagarse
+    mq = Maquina()
+    mq.teclear(b'PRINTCHR$(28);\r', 40_000_000)
+    m = mq.mpu
+    encendido = apagado = False
+    gd0 = None
+    for n in range(3_000_000):
+        if n % 17000 == 0 and n and not (m.p & 0x04):
+            mq.irq()
+        m.step()
+        if mq.mem[0x02AD] == 1 and not encendido:
+            kpnt = mq.mem[0xD1] | (mq.mem[0xD2] << 8)
+            col = mq.mem[0xD800 + (kpnt - 0x0400) + mq.mem[0xD3]] & 0x0F
+            encendido = (col == 2)
+            gd0 = mq.mem[0x0287]
+        if encendido and mq.mem[0x02AD] == 0:
+            kpnt = mq.mem[0xD1] | (mq.mem[0xD2] << 8)
+            col = mq.mem[0xD800 + (kpnt - 0x0400) + mq.mem[0xD3]] & 0x0F
+            apagado = (col == (gd0 & 0x0F))
+            break
+    ok &= caso("cursor parpadea con el color actual", encendido)
+    ok &= caso("cursor restaura el color al apagarse", apagado)
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

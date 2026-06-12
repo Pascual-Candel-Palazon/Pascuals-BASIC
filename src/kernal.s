@@ -156,6 +156,14 @@ KCHROUT:
         lda (KPNT),Y
         eor #$80
         sta (KPNT),Y
+        lda KPNT        ; restaurar el color guardado bajo el cursor
+        sta KCPTR
+        lda KPNT+1
+        clc
+        adc #$D4
+        sta KCPTR+1
+        lda KGDCOL
+        sta (KCPTR),Y
         lda #$00
         sta KBLON
         lda #20
@@ -938,6 +946,14 @@ KCUROFF:
         lda (KPNT),Y
         eor #$80
         sta (KPNT),Y
+        lda KPNT        ; restaurar el color guardado bajo el cursor
+        sta KCPTR
+        lda KPNT+1
+        clc
+        adc #$D4
+        sta KCPTR+1
+        lda KGDCOL
+        sta (KCPTR),Y
         lda #$00
         sta KBLON
         pla
@@ -953,6 +969,7 @@ KLSTART = $02EC
 KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
 KCOLOR  = $0286         ; color actual del cursor/texto
+KGDCOL  = $0287         ; color guardado bajo el cursor (ubicacion C64)
 KRVS    = $02DF         ; flag de inverso ($00/$80)
 KCTRL   = $02E0
 KCBM    = $02E1
@@ -1039,12 +1056,29 @@ KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
         bne @nobl
         lda #20
         sta KBLCNT
+        ; puntero a la RAM de color de la celda del cursor
+        lda KPNT
+        sta KCPTR
+        lda KPNT+1
+        clc
+        adc #$D4
+        sta KCPTR+1
         ldy KCOL
         lda (KPNT),Y
         eor #$80
         sta (KPNT),Y
         lda KBLON
-        eor #$01
+        bne @apag
+        lda (KCPTR),Y   ; encender: guardar el color de la celda...
+        sta KGDCOL
+        lda KCOLOR      ; ...y poner el color de texto actual
+        sta (KCPTR),Y
+        lda #$01
+        sta KBLON
+        bne @nobl
+@apag:  lda KGDCOL      ; apagar: restaurar el color guardado
+        sta (KCPTR),Y
+        lda #$00
         sta KBLON
 @nobl:  pla
         tay
