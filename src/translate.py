@@ -424,6 +424,16 @@ result = "\n".join(out) + "\n"
 result = result.replace(".org ROMLOC  ",
     ".org ROMLOC  \n\t.word INIT  ;[C64] vector frio ($A000)\n\t.word READY  ;[C64] vector caliente ($A002)")
 
+# [C64] redirigir el despacho de OPEN/CLOSE a nuestros parsers (kernal.s),
+# que parsean los argumentos antes de llamar a la primitiva del kernal.
+# El MS puro los mandaba crudos al kernal sin parsear (-> syntax error).
+result = result.replace("CQOPEN=^O177700", "CQOPEN=BOPEN  ; [C64] parser BASIC")
+result = result.replace("CQCLOS=^O177703", "CQCLOS=BCLOSE  ; [C64] parser BASIC")
+# por si el octal ya se convirtio a decimal ($FFC0=65472, $FFC3=65475):
+import re as _re
+result = _re.sub(r"CQOPEN\s*=\s*65472", "CQOPEN = BOPEN", result)
+result = _re.sub(r"CQCLOS\s*=\s*65475", "CQCLOS = BCLOSE", result)
+
 result = result.replace("FPWRT:\tBEQ\tEXP\t",
                         "FPWRT:\tJEQ\tEXP\t; [fixup: rama original fuera de rango en este layout]")
 if C64:

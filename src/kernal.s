@@ -1464,6 +1464,43 @@ KCHKOUT: txa
         clc
         rts
 
+; ------------------------------------------------------------
+; Parsers del lado BASIC para OPEN y CLOSE (el MS puro no los trae;
+; Commodore los anadio). Usan los helpers del BASIC (GETBYT/COMBYT/
+; CHKCOM/FRMEVL/FRESTR) y nuestras primitivas del kernal.
+; ------------------------------------------------------------
+; OPEN lfn [,dispositivo [,secundaria [,"nombre"]]]
+BOPEN:  lda #$01
+        sta KFA         ; dispositivo por defecto = 1 (cinta)
+        lda #$00
+        sta KSA         ; secundaria por defecto = 0
+        sta KFNLEN      ; sin nombre
+        jsr GETBYT      ; fichero logico -> X (flags sobre el terminador)
+        stx KLA
+        beq @go
+        jsr COMBYT      ; ,dispositivo -> X
+        stx KFA
+        beq @go
+        jsr COMBYT      ; ,secundaria -> X
+        stx KSA
+        beq @go
+        jsr CHKCOM      ; coma antes del nombre
+        jsr FRMEVL      ; evaluar la cadena del nombre
+        jsr FRESTR      ; A=longitud, X=lo, Y=hi
+        sta KFNLEN
+        stx KFNADR
+        sty KFNADR+1
+@go:    jsr KOPEN
+        bcs @err
+        rts
+@err:   ldx #$08        ; ERRFC (el MS no tiene errores de E/S propios)
+        jmp ERROR
+; CLOSE lfn
+BCLOSE: jsr GETBYT      ; fichero logico -> X
+        txa
+        jsr KCLOSE
+        rts
+
 
 ; ------------------------------------------------------------
 ; SYS (delta C64): evalua la expresion con las rutinas del BASIC
