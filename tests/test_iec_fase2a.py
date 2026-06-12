@@ -33,6 +33,21 @@ def main():
     ok &= caso("OPEN no aborta: el PRINT siguiente se ejecuta",
                any(mq.mem[0x0400 + i] == 0x11 for i in range(1000)))
 
+
+    # PRINT# / CMD / GET# (handlers del MS, ahora que CHKIN/CHKOUT/CLRCHN
+    # funcionan tras la fase 1)
+    mq = Maquina()
+    mq.teclear(b'10 OPEN1,3\r20 PRINT#1,"HOLA"\r30 CLOSE1\rRUN\r', 60_000_000)
+    ok &= caso("PRINT#1 a pantalla imprime", mq.pantalla_contiene("HOLA"))
+
+    mq = Maquina()
+    mq.teclear(b'10 OPEN1,3\r20 CMD1\r30 PRINT"VIACMD"\r40 CLOSE1\rRUN\r', 60_000_000)
+    ok &= caso("CMD1 redirige la salida", mq.pantalla_contiene("VIACMD"))
+
+    mq = Maquina()
+    mq.teclear(b'10 OPEN1,0\r20 GET#1,A$\r30 PRINT"GOT"\r40 CLOSE1\rRUN\r', 60_000_000)
+    ok &= caso("GET#1 desde teclado no cuelga", mq.pantalla_contiene("GOT"))
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":
