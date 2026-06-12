@@ -21,9 +21,23 @@ Funciona hoy:
 - Vectores RAM de pagina 3: IRQ/BRK/NMI redirigibles ($0314+), E/S
   interceptable ($031A-$0333), RESTOR y VECTOR
 
-Pendiente (en orden): editor v2 (cursor vertical para re-editar lineas
-listadas), vectores del lado BASIC (IGONE/ICRNCH para wedges de
-comandos), juego de caracteres propio, LOAD/SAVE por bus IEC.
+Pendiente (en orden): vectores del lado BASIC (IGONE/ICRNCH para
+wedges de comandos), juego de caracteres propio, LOAD/SAVE por bus IEC.
+
+Mejoras candidatas post-1.0:
+
+- **Recolector de basura de cadenas**: el BASIC hereda el GC cuadratico
+  original de Microsoft (pausas largas con miles de cadenas). Mejorable
+  implementando un GC lineal desde la descripcion algoritmica publicada
+  (tecnica de back-pointers), NUNCA desde desensamblados de ROMs de
+  Commodore (BASIC 3.5/7.0) - vease docs/PROCEDENCIA.md. Requisito
+  previo: bateria de tests de estres del GC contra el actual como
+  referencia (integridad + tiempos).
+
+Proyecto hermano futuro: ROM libre de la unidad 1541 (mismo metodo de
+sala limpia; formato GCR y protocolo IEC estan especificados
+publicamente). Mientras tanto: VICE -iecdevice8 para emulacion y
+SD2IEC (firmware ya libre) para hardware real.
 
 ## Uso
 
