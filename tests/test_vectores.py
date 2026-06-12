@@ -150,6 +150,26 @@ def main():
     ok &= caso("CLALL retorna", mq.subrutina(0xFFE7, 20000))
     ok &= caso("CLRCHN retorna", mq.subrutina(0xFFCC, 20000))
 
+
+    # --- cartucho que arranca por las direcciones INTERNAS documentadas ---
+    mq = Maquina(); m = mq.mpu
+    prog = [0x78, 0xD8, 0xA2, 0xFF, 0x9A,
+            0x20, 0xA3, 0xFD,   # JSR $FDA3 IOINIT
+            0x20, 0x50, 0xFD,   # JSR $FD50 RAMTAS
+            0x20, 0x15, 0xFD,   # JSR $FD15 RESTOR
+            0x20, 0x5B, 0xFF,   # JSR $FF5B CINT
+            0x58,
+            0xA9, 0x51, 0x20, 0xD2, 0xFF,   # 'Q' a CHROUT
+            0x4C, 0x1A, 0xC0]
+    mq.mem.write(0xC000, prog)
+    m.pc = 0xC000
+    for n in range(4_000_000):
+        if n % 17000 == 0 and n and not (m.p & 0x04):
+            mq.irq()
+        m.step()
+    ok &= caso("cart por direcciones internas ($FDA3/$FD50/$FD15/$FF5B)",
+               any(mq.mem[0x0400 + i] == 0x11 for i in range(1000)))
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

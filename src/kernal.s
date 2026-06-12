@@ -1364,6 +1364,22 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
 ; ------------------------------------------------------------
 ; Tabla de saltos estandar documentada
 ; ------------------------------------------------------------
+; ------------------------------------------------------------
+; Trampolines de compatibilidad en las direcciones INTERNAS
+; documentadas que muchos cartuchos y programas llaman directamente
+; (en vez de la tabla de saltos). Honran una interfaz publicada;
+; no contienen codigo derivado de la ROM original.
+; ------------------------------------------------------------
+.org $FD15
+        jmp KRESTOR     ; RESTOR interno
+.org $FD50
+        jmp KRAMTAS     ; RAMTAS interno
+.org $FDA3
+        jmp KIOINIT     ; IOINIT interno
+.org $FF5B
+        jmp KCINT       ; CINT interno
+
+; ------------------------------------------------------------
 .org $FF81
         jmp KCINT       ; $FF81 CINT
         jmp KIOINIT     ; $FF84 IOINIT
