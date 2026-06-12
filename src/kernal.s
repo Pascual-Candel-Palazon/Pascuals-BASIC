@@ -213,24 +213,39 @@ KCHROUT:
         sta $D018
         jmp @done
 @clasif:
+        cmp #$13        ; HOME
+        beq @jhome
+        cmp #$94        ; INST
+        beq @jinst
         cmp #$20
         bcs @ok1
-        jmp @done       ; otros controles: ignorar en v0
+        jmp @done       ; otros controles: ignorar
+@jhome: jmp @home
+@jinst: jmp @inst
 @ok1:
-        ; --- PETSCII -> codigo de pantalla (modo mayusculas) ---
+        ; --- PETSCII -> codigo de pantalla (conversion completa) ---
         cmp #$40
         bcc @store      ; $20-$3F: identico
         cmp #$60
-        bcs @hi
+        bcs @r60
         sec
         sbc #$40        ; $40-$5F -> $00-$1F
         jmp @store
 @jd3:   jmp @done
-@hi:    cmp #$C0
-        bcc @jd3        ; $60-$BF: sin soporte en v0
-        and #$7F        ; PETSCII $C0-$FF -> $40-$7F
+@r60:   cmp #$80
+        bcs @r80
         sec
-        sbc #$40        ; -> codigo de pantalla $00-$3F (letras = letras)
+        sbc #$20        ; $60-$7F -> $40-$5F
+        jmp @store
+@r80:   cmp #$A0
+        bcc @jd3        ; $80-$9F: controles, ya tratados arriba
+        cmp #$C0
+        bcs @rc0
+        sec
+        sbc #$40        ; $A0-$BF -> $60-$7F (graficos C=)
+        jmp @store
+@rc0:   sec
+        sbc #$80        ; $C0-$FF -> $40-$7F (graficos shift)
 @store: ora KRVS        ; inverso: bit 7 si esta activo
         ldy KCOL
         sta (KPNT),Y
@@ -280,6 +295,27 @@ KCHROUT:
         lda KCOL
         cmp #40
         bcs @cr
+        jmp @done
+@home:  lda #<SCREEN    ; cursor a (0,0)
+        sta KPNT
+        lda #>SCREEN
+        sta KPNT+1
+        lda #$00
+        sta KCOL
+        sta KROW
+        jmp @done
+@inst:  ; insertar un espacio en el cursor: desplazar la fila a la derecha
+        ldy #39
+@ins1:  cpy KCOL
+        beq @ins2       ; llegamos al hueco
+        dey
+        lda (KPNT),Y
+        iny
+        sta (KPNT),Y    ; col(y-1) -> col(y)
+        dey
+        jmp @ins1
+@ins2:  lda #$20
+        sta (KPNT),Y    ; espacio en la columna del cursor
         jmp @done
 @del:   lda KCOL
         beq @done       ; en columna 0 no hay nada que borrar
@@ -604,13 +640,13 @@ KEYTABT:
 ; tabla C= (Commodore+1..8 colores claros)
 KEYTABC:
         .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $96,$00,$00,$97,$00,$00,$00,$00
-        .byte $98,$00,$00,$99,$00,$00,$00,$00
-        .byte $9A,$00,$00,$9B,$00,$00,$00,$00
+        .byte $96,$B3,$B0,$97,$AD,$AE,$B1,$00
+        .byte $98,$B2,$AC,$99,$BC,$BB,$A3,$BD
+        .byte $9A,$B7,$A5,$9B,$BF,$B4,$B8,$BE
+        .byte $00,$A2,$B5,$00,$A7,$A1,$B9,$AA
+        .byte $00,$AF,$B6,$00,$00,$00,$00,$00
         .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $81,$00,$00,$95,$00,$00,$00,$00
+        .byte $81,$00,$00,$95,$00,$00,$AB,$00
 
 ; X = indice 0-63 -> A = PETSCII segun modificadores (preserva Y).
 ; Prioridad: CTRL > C= > SHIFT > normal.
