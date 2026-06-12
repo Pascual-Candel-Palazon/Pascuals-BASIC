@@ -64,3 +64,16 @@ usan solo las partes de nivel A/B y se anota.
 Cada sesión de desarrollo cierra con una revisión: ¿se consultó algo de
 nivel C? En caso afirmativo, se anota aquí y se evalúa re-derivar el
 componente afectado. Hasta la fecha: ninguna consulta de nivel C.
+
+
+## Trampolines de compatibilidad (direcciones internas)
+
+Algunos cartuchos y programas llaman a rutinas del kernal en sus
+DIRECCIONES INTERNAS fijas de la ROM original ($FDA3 IOINIT, $FD50
+RAMTAS, $FD15 RESTOR, $FF5B CINT...) en vez de la tabla de saltos
+documentada. Colocamos en esas direcciones pequenos trampolines (JMP a
+nuestra implementacion). Justificacion clean-room: esas direcciones son
+INTERFAZ PUBLICADA (figuran como puntos de entrada en referencias como
+"Mapping the C64"); honrar una direccion documentada con codigo propio
+es nivel B, no copiar la expresion de Commodore (nivel C). No se
+desensambla ni se reproduce su codigo; solo se respeta la direccion.
