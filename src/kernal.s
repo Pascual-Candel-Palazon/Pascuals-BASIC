@@ -121,6 +121,13 @@ KCLS:   ldx #$00
         sta KPNT+1
         lda #$00
         sta KCOL
+        sta KROW
+        ldx #$00
+        lda #$80        ; toda fila es inicio de linea logica
+@lk:    sta KLNK,X
+        inx
+        cpx #25
+        bne @lk
         rts
 
 ; ------------------------------------------------------------
@@ -149,9 +156,9 @@ KCHROUT:
 @nocur: tsx
         lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
         cmp #$0D        ; retorno de carro
-        beq @cr
+        beq @jcr
         cmp #$1D        ; cursor a la derecha
-        beq @right
+        beq @jright
         cmp #$11        ; cursor abajo
         beq @jdown
         cmp #$91        ; cursor arriba
@@ -163,6 +170,8 @@ KCHROUT:
         cmp #$93        ; limpiar pantalla
         beq @jcls
         jmp @clasif
+@jcr:   jmp @cr
+@jright: jmp @right
 @jdown: jmp @down
 @jup:   jmp @up
 @jleft: jmp @left
@@ -193,7 +202,13 @@ KCHROUT:
         lda KCOL
         cmp #40
         bcc @jd3
-@cr:    lda #$00
+        lda #$00        ; wrap: la nueva fila es CONTINUACION
+        sta KLNKV
+        jmp @advrow
+@cr:    lda #$80        ; CR explicito: la nueva fila INICIA linea logica
+        sta KLNKV
+@advrow:
+        lda #$00
         sta KCOL
         clc
         lda KPNT
@@ -201,16 +216,20 @@ KCHROUT:
         sta KPNT
         bcc @ck
         inc KPNT+1
-@ck:    ; pasamos de la fila 24? (PNT > $07C0)
+@ck:    inc KROW
+        ; pasamos de la fila 24? (PNT > $07C0)
         lda KPNT+1
         cmp #>(SCREEN+1000)
-        bcc @done
+        bcc @stamp
         bne @scroll
         lda KPNT
         cmp #<(SCREEN+1000)
-        bcc @done
+        bcc @stamp
 @scroll:
-        jsr KSCROLL
+        jsr KSCROLL     ; resetea KPNT/KROW a fila 24 y desplaza KLNK
+@stamp: ldx KROW
+        lda KLNKV
+        sta KLNK,X
         jmp @done
 @right: inc KCOL
         lda KCOL
@@ -230,14 +249,15 @@ KCHROUT:
         sta KPNT
         bcc @dk
         inc KPNT+1
-@dk:    lda KPNT+1
+@dk:    inc KROW
+        lda KPNT+1
         cmp #>(SCREEN+1000)
         bcc @done
         bne @dsc
         lda KPNT
         cmp #<(SCREEN+1000)
         bcc @done
-@dsc:   jsr KSCROLL
+@dsc:   jsr KSCROLL     ; fija KROW=24
         jmp @done
 @up:    lda KPNT+1
         cmp #>SCREEN
@@ -249,13 +269,15 @@ KCHROUT:
         lda KPNT
         sbc #40
         sta KPNT
-        bcs @jdone2
+        bcs @uk
         dec KPNT+1
-@jdone2: jmp @done
+@uk:    dec KROW
+        jmp @done
 @left:  lda KCOL
         beq @jdone2     ; en columna 0: nada (sin wrap en v1)
         dec KCOL
         jmp @done
+@jdone2: jmp @done
 @cls:   jsr KCLS
 @done:  pla
         tay
@@ -302,6 +324,17 @@ KSCROLL:
         sta KPNT
         lda #>(SCREEN+960)
         sta KPNT+1
+        ; desplazar la tabla de enlace una fila hacia arriba
+        ldx #$00
+@shk:   lda KLNK+1,X
+        sta KLNK,X
+        inx
+        cpx #24
+        bne @shk
+        lda #$80        ; la nueva fila inferior inicia linea (por defecto)
+        sta KLNK+24
+        lda #24
+        sta KROW
         rts
 
 ; ------------------------------------------------------------
@@ -540,6 +573,8 @@ KCHRIN: ldx KLLEN
         sta KLROW+1
         lda KCOL
         sta KLSTART
+        lda KROW
+        sta KEDROW      ; fila donde empezo la entrada (para la col inicial)
         lda KSCRCNT
         sta KSCR0       ; scrolls vistos al empezar a editar
         lda #$01
@@ -547,13 +582,17 @@ KCHRIN: ldx KLLEN
 @bucle: jsr KGETIN
         beq @bucle
         cmp #$0D
-        beq @fin
+        beq @jfin
         cmp #$14        ; DEL: recoger el texto hacia atras
         beq @jdel2
         cmp #$1D        ; derecha
         beq @jder
         cmp #$9D        ; izquierda
         beq @jizq
+        cmp #$11        ; abajo
+        beq @jdwn
+        cmp #$91        ; arriba
+        beq @jup2
         cmp #$20
         bcc @bucle      ; controles: ignorar en el editor
         cmp #$60
@@ -563,6 +602,7 @@ KCHRIN: ldx KLLEN
         sec
         sbc #$20        ; $61-$7A (minusculas estilo ASCII) -> $41-$5A
         jmp @imp
+@jfin:  jmp @fin
 @alta:  cmp #$C1
         bcc @bucle
         cmp #$DB
@@ -570,6 +610,14 @@ KCHRIN: ldx KLLEN
         and #$7F        ; $C1-$DA (PETSCII mayusculas) -> $41-$5A
 @imp:   jsr KCUROFF
         jsr KCHROUT     ; imprimir (sobrescribe en el cursor)
+        jmp @bucle
+@jdwn:  jsr KCUROFF
+        lda #$11
+        jsr KCHROUT     ; mueve KPNT/KROW abajo
+        jmp @bucle
+@jup2:  jsr KCUROFF
+        lda #$91
+        jsr KCHROUT     ; mueve KPNT/KROW arriba
         jmp @bucle
 @jdel2: jmp @del2
 @jder:  jsr KCUROFF
@@ -580,14 +628,12 @@ KCHRIN: ldx KLLEN
         jmp @bucle
 @jizq:  jsr KCUROFF
         lda KCOL
-        cmp KLSTART
-        beq @bucle      ; no retroceder mas alla del inicio
+        beq @jb3        ; ya en columna 0
         dec KCOL
-        jmp @bucle
+@jb3:   jmp @bucle
 @del2:  jsr KCUROFF
         lda KCOL
-        cmp KLSTART
-        beq @jb2        ; nada que borrar
+        beq @jb2        ; nada que borrar en columna 0
         dec KCOL
         ldy KCOL
 @pull:  iny
@@ -606,87 +652,103 @@ KCHRIN: ldx KLLEN
 @fin:   jsr KCUROFF
         lda #$00
         sta KBLSW
-        ; --- ajustar KLROW por los scrolls ocurridos durante la edicion ---
+        ; --- ajustar KEDROW por los scrolls ocurridos durante la edicion ---
         lda KSCRCNT
         sec
         sbc KSCR0
         beq @noadj
-        tax
-@adj:   sec
-        lda KLROW
-        sbc #40
-        sta KLROW
-        bcs @adj1
-        dec KLROW+1
-@adj1:  dex
+        sta KCNT
+@adj:   dec KEDROW
+        dec KCNT
         bne @adj
-@noadj: ; ¿la fila inicial sigue en pantalla?
-        lda KLROW+1
-        cmp #>SCREEN
-        bcs @rowok
-        lda KPNT        ; se perdio por scroll: usar solo la fila actual
-        sta KLROW
-        lda KPNT+1
-        sta KLROW+1
+@noadj: lda KEDROW
+        bpl @edok
         lda #$00
-        sta KLSTART
-@rowok: ldx #$00        ; X = longitud acumulada en KLINE
-        ; --- ¿una fila o dos? ---
-        lda KLROW
-        cmp KPNT
-        bne @dos
-        lda KLROW+1
-        cmp KPNT+1
-        beq @una
-@dos:   ; primera fila: KLSTART..39 completa
-        lda KLROW
+        sta KEDROW
+@edok:  ; --- buscar la fila de INICIO de la linea logica desde KROW ---
+        ldx KROW
+@fs:    lda KLNK,X
+        bmi @gs         ; bit7 = inicio
+        dex
+        bpl @fs
+        ldx #$00
+@gs:    stx KSROW
+        ; columna inicial: si la fila de inicio es la de entrada, usar
+        ; KLSTART (salta el prompt); si no, leer desde la columna 0
+        lda #$00
+        sta KLSTRT2
+        lda KSROW
+        cmp KEDROW
+        bne @sc0
+        lda KLSTART
+        sta KLSTRT2
+@sc0:   ; KVPTR = SCREEN + KSROW*40
+        lda #<SCREEN
         sta KVPTR
-        lda KLROW+1
+        lda #>SCREEN
         sta KVPTR+1
-        ldy KLSTART
-@l1:    lda (KVPTR),Y
+        ldx KSROW
+@mul:   beq @mulok
+        clc
+        lda KVPTR
+        adc #40
+        sta KVPTR
+        bcc @m2
+        inc KVPTR+1
+@m2:    dex
+        jmp @mul
+@mulok: ; copiar fila de inicio: columnas KLSTRT2..39
+        ldx #$00        ; X = longitud en KLINE
+        ldy KLSTRT2
+@cp1:   lda (KVPTR),Y
         and #$7F
         cmp #$20
-        bcs @c1
+        bcs @k1
         clc
         adc #$40
-@c1:    sta KLINE,X
+@k1:    sta KLINE,X
         inx
         iny
         cpy #40
-        bcc @l1
-        ldy #$00        ; la segunda fila empieza en columna 0
-        jmp @cola
-@una:   ldy KLSTART
-@cola:  sty KLSTART     ; columna inicial de la fila final
-        ; --- fila final (la del cursor): buscar el ultimo no-blanco ---
-        ldy #39
-@busca: lda (KPNT),Y
+        bcc @cp1
+        ; ¿hay fila de continuacion? (KSROW+1<=24 y su KLNK no es inicio)
+        lda KSROW
+        cmp #24
+        bcs @strip
+        tay
+        iny
+        lda KLNK,Y
+        bmi @strip      ; la siguiente fila inicia otra linea
+        clc
+        lda KVPTR
+        adc #40
+        sta KVPTR
+        bcc @c2
+        inc KVPTR+1
+@c2:    ldy #$00
+@cp2:   lda (KVPTR),Y
         and #$7F
         cmp #$20
-        bne @hallado
-        cpy KLSTART
-        beq @recorta    ; fila final en blanco
-        dey
-        jmp @busca
-@recorta:
-        jmp @hecho
-@hallado:
-        sty KLLAST      ; columna del ultimo caracter real
-        ldy KLSTART
-@lee:   lda (KPNT),Y
-        and #$7F        ; quitar inversion residual
-        cmp #$20
-        bcs @cnv2       ; 32-63: PETSCII identico
+        bcs @k2
         clc
-        adc #$40        ; codigo pantalla 0-31 -> PETSCII $40-$5F
-@cnv2:  sta KLINE,X
+        adc #$40
+@k2:    sta KLINE,X
         inx
-        cpy KLLAST
-        beq @hecho      ; acabamos de guardar el ultimo
         iny
-        cpx #80
-        bcc @lee
+        cpy #40
+        bcc @cp2
+@strip: ; quitar blancos finales ($20) de KLINE[0..X-1]
+        cpx #$00
+        beq @hecho
+@st1:   dex
+        lda KLINE,X
+        cmp #$20
+        bne @st2
+        cpx #$00
+        bne @st1
+        ldx #$00        ; toda blanca
+        jmp @hecho
+@st2:   inx             ; X = longitud sin blancos finales
 @hecho: stx KLLEN
         lda #$00
         sta KLPOS
@@ -718,6 +780,13 @@ KLPOS   = $02EB
 KLSTART = $02EC
 KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
+KLNK    = $02C0         ; tabla de enlace de lineas (25 bytes, $02C0-$02D8)
+KROW    = $02D9         ; fila del cursor 0-24
+KEDROW  = $02DA         ; fila donde empezo la entrada
+KSROW   = $02DB         ; fila de inicio de la linea logica
+KLSTRT2 = $02DC         ; columna inicial efectiva
+KLNKV   = $02DD         ; valor a estampar en KLNK (inicio/continuacion)
+KCNT    = $02DE
 KSCR0   = $02F0
 KSCRCNT = $02F1
 

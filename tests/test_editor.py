@@ -44,6 +44,24 @@ def main():
     ok &= caso("paste minusculas ($61-$7A)",
                mq.pantalla_contiene("30 V=PEEK(788)"))
 
+    # v2: navegar arriba a una linea listada, editarla y re-entrarla
+    ARRIBA = bytes([0x91]); DER = bytes([0x1D])
+    mq = Maquina()
+    mq.teclear(b"10 A=5\r20 B=6\rLIST\r", 70_000_000)
+    extra = ARRIBA * 3 + DER * 6 + b"9\r"   # subir a '10 A=5' listada, '5'->'9'
+    cola = list(extra); m = mq.mpu; n = 0; prox = 200_000
+    while n < 70_000_000 and (cola or n < prox + 4_000_000):
+        if n % 17000 == 0 and n and not (m.p & 0x04):
+            mq.irq()
+        if cola and n >= prox and mq.mem[0xC6] == 0:
+            mq.mem.write(0x0277, [cola.pop(0)]); mq.mem.write(0xC6, [1])
+            prox = n + 60_000
+        m.step(); n += 1
+    prog = bytes(mq.mem[0x0801:0x0820])
+    ok &= caso("v2: editar linea listada re-entra (A=5 -> A=9)",
+               bytes([0x41, 0xB2, 0x39]) in prog and
+               bytes([0x41, 0xB2, 0x35]) not in prog)
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":
