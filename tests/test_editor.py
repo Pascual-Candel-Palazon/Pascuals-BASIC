@@ -33,12 +33,15 @@ def main():
     ok &= caso("linea con wrap integra en LIST",
                "LINEA LARGA\":GOTO 10" in p.replace("\n", ""))
 
-    # paste: letras en codificacion alta y baja
+    # paste: $C1-$DA ya NO se normaliza a letras (cambio deliberado:
+    # son mayusculas/graficos shifted autenticos y deben preservarse).
+    # Verificamos que renderizan en pantalla (sc $41+) y no desaparecen.
     base = b"30 V=PEEK(788)\r"
     alta = bytes(c + 0x80 if 0x41 <= c <= 0x5A else c for c in base)
-    mq = sesion(alta + b"LIST\r", 35_000_000)
-    ok &= caso("paste PETSCII alto ($C1-$DA)",
-               mq.pantalla_contiene("30 V=PEEK(788)"))
+    mq = sesion(alta + b"\r", 30_000_000)
+    render = any(0x41 <= mq.mem[0x0400 + i] <= 0x5A for i in range(1000))
+    ok &= caso("paste PETSCII alto: renderiza como shifted (no se pierde)",
+               render)
     baja = bytes(c + 0x20 if 0x41 <= c <= 0x5A else c for c in base)
     mq = sesion(baja + b"LIST\r", 35_000_000)
     ok &= caso("paste minusculas ($61-$7A)",
