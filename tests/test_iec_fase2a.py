@@ -48,6 +48,17 @@ def main():
     mq.teclear(b'10 OPEN1,0\r20 GET#1,A$\r30 PRINT"GOT"\r40 CLOSE1\rRUN\r', 60_000_000)
     ok &= caso("GET#1 desde teclado no cuelga", mq.pantalla_contiene("GOT"))
 
+
+    # mensajes de error de E/S largos (estilo Commodore, en el kernal)
+    mq = Maquina(); mq.teclear(b'OPEN1,3\rOPEN1,3\r', 50_000_000)
+    ok &= caso('error duplicado -> "?FILE OPEN ERROR"',
+               mq.pantalla_contiene("FILE OPEN ERROR"))
+
+    prog = b''.join(b'OPEN%d,3\r' % i for i in range(1, 12))
+    mq = Maquina(); mq.teclear(prog, 120_000_000)
+    ok &= caso('11 ficheros -> "?TOO MANY FILES ERROR"',
+               mq.pantalla_contiene("TOO MANY FILES ERROR"))
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

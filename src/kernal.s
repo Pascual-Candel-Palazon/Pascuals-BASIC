@@ -1493,13 +1493,49 @@ BOPEN:  lda #$01
 @go:    jsr KOPEN
         bcs @err
         rts
-@err:   ldx #$08        ; ERRFC (el MS no tiene errores de E/S propios)
-        jmp ERROR
+@err:   jmp KIOERR      ; A = codigo de error del kernal -> mensaje largo
 ; CLOSE lfn
 BCLOSE: jsr GETBYT      ; fichero logico -> X
         txa
         jsr KCLOSE
         rts
+
+; ------------------------------------------------------------
+; KIOERR: imprime un mensaje de error de E/S largo (estilo Commodore)
+; y reengancha con la limpieza de error del BASIC. A = codigo (1-9).
+; Los mensajes viven aqui, en el KERNAL, porque la ROM del BASIC esta
+; llena. Texto en ingles descriptivo (interfaz observable, nivel A/B).
+; ------------------------------------------------------------
+KIOERR: cmp #$01
+        bcs @ok
+        lda #$01
+@ok:    cmp #$0A
+        bcc @ok2
+        lda #$01
+@ok2:   pha
+        jsr KCLRCHN     ; cerrar canales como hace ERROR
+        jsr CRDO        ; CRLF
+        jsr OUTQST      ; "?"
+        pla
+        sec
+        sbc #$01        ; codigo 1..9 -> indice 0..8
+        asl             ; *2 (tabla de punteros)
+        tax
+        lda KIOMSG,X
+        ldy KIOMSG+1,X
+        jsr STROUT      ; imprimir el mensaje (sin " ERROR")
+        jmp TYPERR      ; " ERROR" + numero de linea + READY
+KIOMSG: .word KIOM1,KIOM2,KIOM3,KIOM4,KIOM5
+        .word KIOM6,KIOM7,KIOM8,KIOM9
+KIOM1:  .byte "TOO MANY FILES",0
+KIOM2:  .byte "FILE OPEN",0
+KIOM3:  .byte "FILE NOT OPEN",0
+KIOM4:  .byte "FILE NOT FOUND",0
+KIOM5:  .byte "DEVICE NOT PRESENT",0
+KIOM6:  .byte "NOT INPUT FILE",0
+KIOM7:  .byte "NOT OUTPUT FILE",0
+KIOM8:  .byte "MISSING FILE NAME",0
+KIOM9:  .byte "ILLEGAL DEVICE NUMBER",0
 
 
 ; ------------------------------------------------------------
