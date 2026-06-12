@@ -1,0 +1,919 @@
+; ============================================================
+;  KERNAL libre v0 para Commodore 64 — sala limpia
+;  Escrito desde especificacion documentada (tabla de saltos
+;  estandar $FF81+, registros VIC-II/CIA publicados, matriz de
+;  teclado documentada). Sin codigo derivado de la ROM original.
+;
+;  v0 implementa: RESET, pantalla+scroll, CHROUT, SCNKEY por IRQ,
+;  GETIN, CHRIN (eco), STOP, UDTIM. El resto: stubs.
+;  Arranca el BASIC (simbolo INIT del modulo BASIC).
+; ============================================================
+
+; --- RAM propia del kernal (fuera de las zonas que usa el BASIC) ---
+KVPTR   = $C3
+KPNT    = $D1           ; puntero a linea actual de pantalla (lo/hi)
+KCOL    = $D3           ; columna del cursor (0-39)
+KNDX    = $C6           ; numero de teclas en bufer
+KTIME   = $A0           ; reloj jiffy (3 bytes)
+KBUF    = $0277         ; bufer de teclado (10 bytes)
+KMATRIX = $02A0         ; estado anterior de la matriz (8 bytes)
+
+SCREEN  = $0400
+COLOR   = $D800
+
+.org $E200              ; tras la continuacion del BASIC
+
+; ------------------------------------------------------------
+; RESET
+; ------------------------------------------------------------
+KRESET: sei
+        cld
+        ldx #$FF
+        txs
+        lda #$37        ; datos del puerto ANTES que la direccion:
+        sta $01         ; si DDR se activa con datos=0, las ROMs se
+        lda #$2F        ; desbancan con el PC dentro de ellas
+        sta $00
+        ; --- CIAs: silenciar interrupciones ---
+        lda #$7F
+        sta $DC0D
+        sta $DD0D
+        lda $DC0D       ; limpiar pendientes
+        lda $DD0D
+        ; CIA1: puerto A salida (filas), puerto B entrada (columnas)
+        lda #$FF
+        sta $DC02
+        lda #$00
+        sta $DC03
+        ; CIA2 puerto A: banco VIC 0 (bits 0-1 = 11)
+        lda #$3F
+        sta $DD02
+        lda #$03
+        sta $DD00
+        ; --- VIC-II ---
+        lda #$1B
+        sta $D011       ; modo texto, pantalla visible
+        lda #$C8
+        sta $D016       ; 40 columnas
+        lda #$15        ; pantalla $0400, caracteres $1000 (chargen)
+        sta $D018
+        lda #$00
+        sta $D015       ; sprites fuera
+        lda #$0E
+        sta $D020       ; borde azul claro
+        lda #$06
+        sta $D021       ; fondo azul
+        ; --- limpiar pantalla y color ---
+        jsr KCLS
+        ; --- estado de teclado ---
+        lda #$00
+        sta KNDX
+        sta KSHIFT
+        sta KBLON
+        sta KBLSW
+        sta KLMASK
+        sta KRPT
+        sta KLLEN
+        sta KLPOS
+        sta KSCRCNT
+        lda #20
+        sta KBLCNT
+        lda #$00
+        ldx #$07
+@mx:    sta KMATRIX,X
+        dex
+        bpl @mx
+        ; --- reloj jiffy: CIA1 timer A ~60 Hz ---
+        lda #$95
+        sta $DC04
+        lda #$42
+        sta $DC05
+        lda #$81        ; habilitar IRQ de timer A
+        sta $DC0D
+        lda #$11        ; arrancar timer, recarga continua
+        sta $DC0E
+        jsr KRESTOR     ; vectores de pagina 3 por defecto
+        cli
+        jmp INIT        ; arranque en frio del BASIC
+
+; ------------------------------------------------------------
+; limpiar pantalla y posicionar cursor en (0,0)
+; ------------------------------------------------------------
+KCLS:   ldx #$00
+        lda #$20        ; espacio (codigo de pantalla)
+@l1:    sta SCREEN,X
+        sta SCREEN+$100,X
+        sta SCREEN+$200,X
+        sta SCREEN+$2E8,X
+        inx
+        bne @l1
+        ldx #$00
+        lda #$0E        ; azul claro para todo el color RAM
+@l2:    sta COLOR,X
+        sta COLOR+$100,X
+        sta COLOR+$200,X
+        sta COLOR+$2E8,X
+        inx
+        bne @l2
+        lda #<SCREEN
+        sta KPNT
+        lda #>SCREEN
+        sta KPNT+1
+        lda #$00
+        sta KCOL
+        rts
+
+; ------------------------------------------------------------
+; CHROUT: imprime PETSCII en pantalla (A = caracter)
+; conserva A, X, Y
+; ------------------------------------------------------------
+KCHROUT:
+        php
+        sei             ; el blink del IRQ no debe tocar mientras movemos
+        pha
+        txa
+        pha
+        tya
+        pha
+        ; --- apagar el cursor si esta encendido ---
+        lda KBLON
+        beq @nocur
+        ldy KCOL
+        lda (KPNT),Y
+        eor #$80
+        sta (KPNT),Y
+        lda #$00
+        sta KBLON
+        lda #20
+        sta KBLCNT      ; reiniciar la cadencia al teclear
+@nocur: tsx
+        lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
+        cmp #$0D        ; retorno de carro
+        beq @cr
+        cmp #$1D        ; cursor a la derecha
+        beq @right
+        cmp #$11        ; cursor abajo
+        beq @jdown
+        cmp #$91        ; cursor arriba
+        beq @jup
+        cmp #$9D        ; cursor a la izquierda
+        beq @jleft
+        cmp #$14        ; DEL: retroceso visual
+        beq @jdel
+        cmp #$93        ; limpiar pantalla
+        beq @jcls
+        jmp @clasif
+@jdown: jmp @down
+@jup:   jmp @up
+@jleft: jmp @left
+@jdel:  jmp @del
+@jcls:  jmp @cls
+@clasif:
+        cmp #$20
+        bcs @ok1
+        jmp @done       ; otros controles: ignorar en v0
+@ok1:
+        ; --- PETSCII -> codigo de pantalla (modo mayusculas) ---
+        cmp #$40
+        bcc @store      ; $20-$3F: identico
+        cmp #$60
+        bcs @hi
+        sec
+        sbc #$40        ; $40-$5F -> $00-$1F
+        jmp @store
+@jd3:   jmp @done
+@hi:    cmp #$C0
+        bcc @jd3        ; $60-$BF: sin soporte en v0
+        and #$7F        ; PETSCII $C0-$FF -> $40-$7F
+        sec
+        sbc #$40        ; -> codigo de pantalla $00-$3F (letras = letras)
+@store: ldy KCOL
+        sta (KPNT),Y
+        inc KCOL
+        lda KCOL
+        cmp #40
+        bcc @jd3
+@cr:    lda #$00
+        sta KCOL
+        clc
+        lda KPNT
+        adc #40
+        sta KPNT
+        bcc @ck
+        inc KPNT+1
+@ck:    ; pasamos de la fila 24? (PNT > $07C0)
+        lda KPNT+1
+        cmp #>(SCREEN+1000)
+        bcc @done
+        bne @scroll
+        lda KPNT
+        cmp #<(SCREEN+1000)
+        bcc @done
+@scroll:
+        jsr KSCROLL
+        jmp @done
+@right: inc KCOL
+        lda KCOL
+        cmp #40
+        bcs @cr
+        jmp @done
+@del:   lda KCOL
+        beq @done       ; en columna 0 no hay nada que borrar
+        dec KCOL
+        ldy KCOL
+        lda #$20
+        sta (KPNT),Y
+        jmp @done
+@down:  clc
+        lda KPNT
+        adc #40
+        sta KPNT
+        bcc @dk
+        inc KPNT+1
+@dk:    lda KPNT+1
+        cmp #>(SCREEN+1000)
+        bcc @done
+        bne @dsc
+        lda KPNT
+        cmp #<(SCREEN+1000)
+        bcc @done
+@dsc:   jsr KSCROLL
+        jmp @done
+@up:    lda KPNT+1
+        cmp #>SCREEN
+        bne @upok
+        lda KPNT
+        cmp #<SCREEN
+        beq @jdone2     ; ya en la primera linea
+@upok:  sec
+        lda KPNT
+        sbc #40
+        sta KPNT
+        bcs @jdone2
+        dec KPNT+1
+@jdone2: jmp @done
+@left:  lda KCOL
+        beq @jdone2     ; en columna 0: nada (sin wrap en v1)
+        dec KCOL
+        jmp @done
+@cls:   jsr KCLS
+@done:  pla
+        tay
+        pla
+        tax
+        pla
+        plp
+        clc
+        rts
+
+; ------------------------------------------------------------
+; scroll de una linea hacia arriba
+; Los bloques se copian SECUENCIALMENTE y completos: entrelazar
+; las paginas con un mismo indice corrompe los 40 bytes que el
+; bloque siguiente pisa antes de que el anterior los lea.
+; ------------------------------------------------------------
+KSCROLL:
+        inc KSCRCNT     ; contador global (ajuste del editor)
+        ldx #$00
+@s1:    lda SCREEN+40,X
+        sta SCREEN,X
+        inx
+        bne @s1
+@s2:    lda SCREEN+$100+40,X
+        sta SCREEN+$100,X
+        inx
+        bne @s2
+@s3:    lda SCREEN+$200+40,X
+        sta SCREEN+$200,X
+        inx
+        bne @s3
+@s4:    lda SCREEN+$300+40,X
+        sta SCREEN+$300,X
+        inx
+        cpx #<(1000-40-$300)
+        bne @s4
+        ldx #39         ; limpiar ultima fila
+        lda #$20
+@s5:    sta SCREEN+960,X
+        dex
+        bpl @s5
+        ; cursor a inicio de la ultima fila
+        lda #<(SCREEN+960)
+        sta KPNT
+        lda #>(SCREEN+960)
+        sta KPNT+1
+        rts
+
+; ------------------------------------------------------------
+; SCNKEY: escaneo de la matriz; mete nuevas pulsaciones en KBUF
+; (sin shift en v0). Deteccion de flanco contra KPREV.
+; ------------------------------------------------------------
+KSCNKEY:
+        ldx #$00        ; columna CIA 0..7
+@col:   lda KROWSEL,X
+        sta $DC00
+        lda $DC01
+        eor #$FF        ; bits a 1 = teclas pulsadas
+        sta KMATRIX,X
+        inx
+        cpx #$08
+        bne @col
+        lda #$00
+        sta $DC00       ; todas las filas activas (para STOP)
+        ; --- estado de shift: LSHIFT col1/bit7, RSHIFT col6/bit4 ---
+        lda #$00
+        sta KSHIFT
+        lda KMATRIX+1
+        and #$80
+        beq @nols
+        inc KSHIFT
+@nols:  lda KMATRIX+6
+        and #$10
+        beq @nors
+        inc KSHIFT
+@nors:
+        ; --- detectar flancos y traducir ---
+        ldx #$00
+@cmpc:  lda KMATRIX,X
+        tay             ; actual
+        eor KPREV,X
+        and KMATRIX,X   ; 1 = recien pulsada
+        sta KTMP
+        tya
+        sta KPREV,X
+        ldy #$00
+@bit:   lda KTMP
+        and KBITS,Y
+        beq @next
+        ; indice en la tabla = columna*8 + bit
+        txa
+        asl
+        asl
+        asl
+        sta KTMP2
+        tya
+        clc
+        adc KTMP2
+        stx KTMP2       ; preservar X
+        tax
+        lda KSHIFT
+        beq @nosh
+        lda KEYTABS,X   ; tabla con shift
+        jmp @gotch
+@nosh:  lda KEYTAB,X
+@gotch: beq @restx      ; tecla sin asignar: descartar
+        ldx KTMP2
+        sty KTMP2       ; preservar Y
+        ; --- registrar la tecla para la repeticion ---
+        pha
+        txa
+        sta KLCOL       ; columna de la ultima tecla
+        ldy KTMP2
+        lda KBITS,Y
+        sta KLMASK      ; mascara de bit
+        txa
+        asl
+        asl
+        asl
+        sta KLIDX
+        tya
+        clc
+        adc KLIDX
+        sta KLIDX       ; indice 0-63 en las tablas
+        lda #$00
+        sta KRPT        ; reiniciar el contador de repeticion
+        pla
+        ; --- al bufer ---
+        ldy KNDX
+        cpy #10
+        bcs @full
+        sta KBUF,Y
+        inc KNDX
+@full:  ldy KTMP2
+        jmp @next
+@restx: ldx KTMP2
+@next:  iny
+        cpy #$08
+        bne @bit
+        inx
+        cpx #$08
+        beq @scand
+        jmp @cmpc
+@scand: ; --- repeticion de tecla mantenida ---
+        lda KLMASK
+        beq @norpt      ; no hay tecla registrada
+        ldx KLCOL
+        and KMATRIX,X
+        bne @held
+        lda #$00        ; soltada: olvidar
+        sta KLMASK
+        beq @norpt
+@held:  inc KRPT
+        lda KRPT
+        cmp #16         ; retardo inicial
+        bcc @norpt
+        cmp #20         ; cadencia: cada 4 jiffies
+        bcc @norpt
+        lda #16
+        sta KRPT
+        ; re-traducir con el shift actual
+        ldx KLIDX
+        lda KSHIFT
+        beq @rpns
+        lda KEYTABS,X
+        jmp @rpch
+@rpns:  lda KEYTAB,X
+@rpch:  beq @norpt
+        ; ¿es repetible? espacio, cursores, DEL, INS
+        ldx #$06
+@rptst: cmp KRPTSET,X
+        beq @rpok
+        dex
+        bpl @rptst
+        bmi @norpt
+@rpok:  ldx KNDX
+        cpx #10
+        bcs @norpt
+        sta KBUF,X
+        inc KNDX
+@norpt: rts
+
+KRPTSET: .byte $20,$1D,$9D,$11,$91,$14,$94
+
+KTMP    = $02A8
+KTMP2   = $02A9
+KPREV   = $02B0         ; estado anterior para deteccion de flanco
+KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
+KBITS:  .byte $01,$02,$04,$08,$10,$20,$40,$80
+
+; tabla matriz->PETSCII (sin shift), fila=columna CIA, 8x8
+KEYTAB:
+        .byte $14,$0D,$1D,$00,$00,$00,$00,$11  ; DEL RET -> F7 F1 F3 F5 v
+        .byte '3','W','A','4','Z','S','E',$00  ; ... LSHIFT
+        .byte '5','R','D','6','C','F','T','X'
+        .byte '7','Y','G','8','B','H','U','V'
+        .byte '9','I','J','0','M','K','O','N'
+        .byte '+','P','L','-','.',':','@',','
+        .byte $5C,'*',';',$13,$00,'=',$5E,'/'  ; libra * ; HOME RSHIFT = flecha /
+        .byte '1',$5F,$00,'2',' ',$00,'Q',$03  ; 1 <- CTRL 2 SPC C= Q STOP
+
+; tabla con shift
+KEYTABS:
+        .byte $94,$0D,$9D,$00,$00,$00,$00,$91  ; INS RET <-cursor ... ^cursor
+        .byte '#','W','A','$','Z','S','E',$00
+        .byte '%','R','D','&','C','F','T','X'
+        .byte $27,'Y','G','(','B','H','U','V'  ; $27 = apostrofe
+        .byte ')','I','J','0','M','K','O','N'
+        .byte '+','P','L','-','>','[','@','<'
+        .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
+        .byte '!',$5F,$00,'"',' ',$00,'Q',$03  ; shift+2 = comillas
+
+KSHIFT  = $02AB
+
+; ------------------------------------------------------------
+; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
+; ------------------------------------------------------------
+KGETIN: txa
+        pha             ; preservar X e Y: INLIN del BASIC depende de ello
+        tya
+        pha
+        ldx KNDX
+        beq @empty
+        sei
+        lda KBUF
+        sta KTMP3
+        ldx #$00
+@sh:    lda KBUF+1,X
+        sta KBUF,X
+        inx
+        cpx KNDX
+        bcc @sh
+        dec KNDX
+        cli
+        pla
+        tay
+        pla
+        tax
+        lda KTMP3       ; A = caracter (Z=0 salvo char NUL)
+        rts
+@empty: pla
+        tay
+        pla
+        tax
+        lda #$00
+        rts
+KTMP3   = $02AA
+
+; ------------------------------------------------------------
+; CHRIN: espera un caracter, lo devuelve con eco
+; ------------------------------------------------------------
+; ------------------------------------------------------------
+; CHRIN v2: entrada editada en pantalla (WYSIWYG).
+; Bucle editor: cursores mueven, DEL recoge el texto. Al pulsar
+; RETURN se lee la linea DESDE la pantalla (codigo de pantalla ->
+; PETSCII) y se sirve al BASIC caracter a caracter. Limite v1:
+; la linea logica es una fila (40 columnas).
+; ------------------------------------------------------------
+KCHRIN: ldx KLLEN
+        beq @editar     ; no hay linea pendiente: entrar al editor
+@servir:
+        ldx KLPOS
+        cpx KLLEN
+        bcc @sigue
+        lda #$00        ; agotada
+        sta KLLEN
+        sta KLPOS
+        lda #$0D
+        jsr KCHROUT     ; eco del retorno (avanza linea)
+        lda #$0D
+        clc
+        rts
+@sigue: lda KLINE,X
+        inc KLPOS
+        clc
+        rts
+
+@editar:
+        lda KPNT        ; recordar el inicio de la linea logica
+        sta KLROW
+        lda KPNT+1
+        sta KLROW+1
+        lda KCOL
+        sta KLSTART
+        lda KSCRCNT
+        sta KSCR0       ; scrolls vistos al empezar a editar
+        lda #$01
+        sta KBLSW       ; cursor visible
+@bucle: jsr KGETIN
+        beq @bucle
+        cmp #$0D
+        beq @fin
+        cmp #$14        ; DEL: recoger el texto hacia atras
+        beq @jdel2
+        cmp #$1D        ; derecha
+        beq @jder
+        cmp #$9D        ; izquierda
+        beq @jizq
+        cmp #$20
+        bcc @bucle      ; controles: ignorar en el editor
+        cmp #$60
+        bcc @imp        ; $20-$5F: directo
+        cmp #$7B
+        bcs @alta
+        sec
+        sbc #$20        ; $61-$7A (minusculas estilo ASCII) -> $41-$5A
+        jmp @imp
+@alta:  cmp #$C1
+        bcc @bucle
+        cmp #$DB
+        bcs @bucle
+        and #$7F        ; $C1-$DA (PETSCII mayusculas) -> $41-$5A
+@imp:   jsr KCUROFF
+        jsr KCHROUT     ; imprimir (sobrescribe en el cursor)
+        jmp @bucle
+@jdel2: jmp @del2
+@jder:  jsr KCUROFF
+        lda KCOL
+        cmp #39
+        bcs @bucle
+        inc KCOL
+        jmp @bucle
+@jizq:  jsr KCUROFF
+        lda KCOL
+        cmp KLSTART
+        beq @bucle      ; no retroceder mas alla del inicio
+        dec KCOL
+        jmp @bucle
+@del2:  jsr KCUROFF
+        lda KCOL
+        cmp KLSTART
+        beq @jb2        ; nada que borrar
+        dec KCOL
+        ldy KCOL
+@pull:  iny
+        cpy #40
+        bcs @cap
+        lda (KPNT),Y
+        dey
+        sta (KPNT),Y
+        iny
+        jmp @pull
+@cap:   lda #$20
+        ldy #39
+        sta (KPNT),Y
+@jb2:   jmp @bucle
+
+@fin:   jsr KCUROFF
+        lda #$00
+        sta KBLSW
+        ; --- ajustar KLROW por los scrolls ocurridos durante la edicion ---
+        lda KSCRCNT
+        sec
+        sbc KSCR0
+        beq @noadj
+        tax
+@adj:   sec
+        lda KLROW
+        sbc #40
+        sta KLROW
+        bcs @adj1
+        dec KLROW+1
+@adj1:  dex
+        bne @adj
+@noadj: ; ¿la fila inicial sigue en pantalla?
+        lda KLROW+1
+        cmp #>SCREEN
+        bcs @rowok
+        lda KPNT        ; se perdio por scroll: usar solo la fila actual
+        sta KLROW
+        lda KPNT+1
+        sta KLROW+1
+        lda #$00
+        sta KLSTART
+@rowok: ldx #$00        ; X = longitud acumulada en KLINE
+        ; --- ¿una fila o dos? ---
+        lda KLROW
+        cmp KPNT
+        bne @dos
+        lda KLROW+1
+        cmp KPNT+1
+        beq @una
+@dos:   ; primera fila: KLSTART..39 completa
+        lda KLROW
+        sta KVPTR
+        lda KLROW+1
+        sta KVPTR+1
+        ldy KLSTART
+@l1:    lda (KVPTR),Y
+        and #$7F
+        cmp #$20
+        bcs @c1
+        clc
+        adc #$40
+@c1:    sta KLINE,X
+        inx
+        iny
+        cpy #40
+        bcc @l1
+        ldy #$00        ; la segunda fila empieza en columna 0
+        jmp @cola
+@una:   ldy KLSTART
+@cola:  sty KLSTART     ; columna inicial de la fila final
+        ; --- fila final (la del cursor): buscar el ultimo no-blanco ---
+        ldy #39
+@busca: lda (KPNT),Y
+        and #$7F
+        cmp #$20
+        bne @hallado
+        cpy KLSTART
+        beq @recorta    ; fila final en blanco
+        dey
+        jmp @busca
+@recorta:
+        jmp @hecho
+@hallado:
+        sty KLLAST      ; columna del ultimo caracter real
+        ldy KLSTART
+@lee:   lda (KPNT),Y
+        and #$7F        ; quitar inversion residual
+        cmp #$20
+        bcs @cnv2       ; 32-63: PETSCII identico
+        clc
+        adc #$40        ; codigo pantalla 0-31 -> PETSCII $40-$5F
+@cnv2:  sta KLINE,X
+        inx
+        cpy KLLAST
+        beq @hecho      ; acabamos de guardar el ultimo
+        iny
+        cpx #80
+        bcc @lee
+@hecho: stx KLLEN
+        lda #$00
+        sta KLPOS
+        jmp @servir
+
+; apagar el cursor si esta invertido (auxiliar del editor)
+KCUROFF:
+        pha
+        lda KBLON
+        beq @no
+        sei
+        tya
+        pha
+        ldy KCOL
+        lda (KPNT),Y
+        eor #$80
+        sta (KPNT),Y
+        lda #$00
+        sta KBLON
+        pla
+        tay
+        cli
+@no:    pla
+        rts
+
+KLINE   = $033C         ; bufer de linea leida (cassette buffer, sin cinta)
+KLLEN   = $02EA
+KLPOS   = $02EB
+KLSTART = $02EC
+KLROW   = $02ED         ; (2 bytes)
+KLLAST  = $02EF
+KSCR0   = $02F0
+KSCRCNT = $02F1
+
+; ------------------------------------------------------------
+; STOP: Z=1 si RUN/STOP pulsada
+; ------------------------------------------------------------
+KSTOP:  lda #$7F        ; fila 7
+        sta $DC00
+        lda $DC01
+        sta KTMP
+        lda #$00
+        sta $DC00
+        lda KTMP
+        and #$80        ; bit 7 = RUN/STOP
+        rts             ; Z=1 si pulsada
+
+; ------------------------------------------------------------
+; UDTIM: reloj jiffy
+; ------------------------------------------------------------
+KUDTIM: inc KTIME+2
+        bne @r
+        inc KTIME+1
+        bne @r
+        inc KTIME
+@r:     rts
+
+; ------------------------------------------------------------
+; IRQ / NMI
+; ------------------------------------------------------------
+; ------------------------------------------------------------
+; Entrada hardware de IRQ/BRK: salva registros y despacha por
+; los vectores RAM de pagina 3 ($0314 IRQ / $0316 BRK), que el
+; software puede redirigir.
+; ------------------------------------------------------------
+KIRQENT:
+        pha
+        txa
+        pha
+        tya
+        pha
+        tsx
+        lda $0104,X     ; P apilado por el hardware
+        and #$10        ; ¿flag B? entonces es BRK
+        beq @hw
+        jmp ($0316)     ; CBINV
+@hw:    jmp ($0314)     ; CINV
+
+; manejador por defecto del IRQ (destino inicial de $0314)
+KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
+        jsr KUDTIM
+        jsr KSCNKEY
+        ; --- parpadeo del cursor (solo si se espera entrada) ---
+        lda KBLSW
+        beq @nobl
+        dec KBLCNT
+        bne @nobl
+        lda #20
+        sta KBLCNT
+        ldy KCOL
+        lda (KPNT),Y
+        eor #$80
+        sta (KPNT),Y
+        lda KBLON
+        eor #$01
+        sta KBLON
+@nobl:  pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+; BRK por defecto: restaurar y seguir (destino inicial de $0316)
+KBRK:   pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+; NMI hardware: despacho por ($0318)
+KNMIENT:
+        jmp ($0318)
+KNMI:   rti
+
+; --- tabla ROM de vectores por defecto para pagina 3 ---
+KVECTAB:
+        .word KIRQ      ; $0314 CINV
+        .word KBRK      ; $0316 CBINV
+        .word KNMI      ; $0318 NMINV
+        .word KSTUB     ; $031A IOPEN
+        .word KSTUB     ; $031C ICLOSE
+        .word KSTUB     ; $031E ICHKIN
+        .word KSTUB     ; $0320 ICKOUT
+        .word KSTUB     ; $0322 ICLRCH
+        .word KCHRIN    ; $0324 IBASIN
+        .word KCHROUT   ; $0326 IBSOUT
+        .word KSTOP     ; $0328 ISTOP
+        .word KGETIN    ; $032A IGETIN
+        .word KSTUB     ; $032C ICLALL
+        .word KSTUB     ; $032E USRCMD
+        .word KSTUB     ; $0330 ILOAD
+        .word KSTUB     ; $0332 ISAVE
+KVECEND:
+
+; RESTOR ($FF8A): restaurar los vectores por defecto
+KRESTOR:
+        ldx #$00
+@l:     lda KVECTAB,X
+        sta $0314,X
+        inx
+        cpx #(KVECEND-KVECTAB)
+        bne @l
+        rts
+
+; VECTOR ($FF8D): C=1 copia los vectores a (X/Y); C=0 los carga desde (X/Y)
+KVECTOR:
+        stx KVPTR
+        sty KVPTR+1
+        ldy #(KVECEND-KVECTAB-1)
+@v:     bcc @cargar
+        lda $0314,Y
+        sta (KVPTR),Y
+        jmp @sig
+@cargar:
+        lda (KVPTR),Y
+        sta $0314,Y
+@sig:   dey
+        bpl @v
+        rts
+
+KBLCNT  = $02AC
+KBLON   = $02AD
+KBLSW   = $02AE
+KLCOL   = $02AF
+KLMASK  = $02B8
+KLIDX   = $02B9
+KRPT    = $02BA
+
+KSTUB:  clc
+        rts
+
+
+; ------------------------------------------------------------
+; SYS (delta C64): evalua la expresion con las rutinas del BASIC
+; y salta a la direccion; un RTS alli devuelve al BASIC.
+; ------------------------------------------------------------
+KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
+        jsr GETADR      ; convertir a entero en POKER
+        jmp (POKER)     ; el RTS del usuario vuelve a NEWSTT
+
+; ------------------------------------------------------------
+; Tabla de saltos estandar documentada
+; ------------------------------------------------------------
+.org $FF81
+        jmp KCLS        ; $FF81 CINT
+        jmp KSTUB       ; $FF84 IOINIT
+        jmp KSTUB       ; $FF87 RAMTAS
+        jmp KRESTOR     ; $FF8A RESTOR
+        jmp KVECTOR     ; $FF8D VECTOR
+        jmp KSTUB       ; $FF90 SETMSG
+        jmp KSTUB       ; $FF93 SECOND
+        jmp KSTUB       ; $FF96 TKSA
+        jmp KSTUB       ; $FF99 MEMTOP
+        jmp KSTUB       ; $FF9C MEMBOT
+        jmp KSCNKEY     ; $FF9F SCNKEY
+        jmp KSTUB       ; $FFA2 SETTMO
+        jmp KSTUB       ; $FFA5 ACPTR
+        jmp KSTUB       ; $FFA8 CIOUT
+        jmp KSTUB       ; $FFAB UNTLK
+        jmp KSTUB       ; $FFAE UNLSN
+        jmp KSTUB       ; $FFB1 LISTEN
+        jmp KSTUB       ; $FFB4 TALK
+        jmp KSTUB       ; $FFB7 READST
+        jmp KSTUB       ; $FFBA SETLFS
+        jmp KSTUB       ; $FFBD SETNAM
+        jmp KSTUB       ; $FFC0 OPEN
+        jmp KSTUB       ; $FFC3 CLOSE
+        jmp KSTUB       ; $FFC6 CHKIN
+        jmp KSTUB       ; $FFC9 CHKOUT
+        jmp KSTUB       ; $FFCC CLRCHN
+        jmp ($0324)     ; $FFCF CHRIN  (IBASIN)
+        jmp ($0326)     ; $FFD2 CHROUT (IBSOUT)
+        jmp KSTUB       ; $FFD5 LOAD
+        jmp KSTUB       ; $FFD8 SAVE
+        jmp KSTUB       ; $FFDB SETTIM
+        jmp KSTUB       ; $FFDE RDTIM
+        jmp ($0328)     ; $FFE1 STOP  (ISTOP)
+        jmp ($032A)     ; $FFE4 GETIN (IGETIN)
+        jmp KSTUB       ; $FFE7 CLALL
+        jmp KUDTIM      ; $FFEA UDTIM
+        jmp KSTUB       ; $FFED SCREEN
+        jmp KSTUB       ; $FFF0 PLOT
+        jmp KSTUB       ; $FFF3 IOBASE
+
+.org $FFFA
+        .word KNMIENT   ; NMI
+        .word KRESET    ; RESET
+        .word KIRQENT   ; IRQ/BRK
