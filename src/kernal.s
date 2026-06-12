@@ -69,6 +69,7 @@ KRESET: sei
         ; --- estado de teclado ---
         lda #$00
         sta KNDX
+        sta KRVS
         sta KSHIFT
         sta KBLON
         sta KBLSW
@@ -164,6 +165,14 @@ KCHROUT:
         beq @setcol
         dex
         bpl @colt
+        cmp #$12        ; RVS ON (inverso)
+        beq @jrvson
+        cmp #$92        ; RVS OFF
+        beq @jrvsoff
+        cmp #$0E        ; minusculas (juego de texto)
+        beq @jlower
+        cmp #$8E        ; mayusculas/graficos
+        beq @jupper
         cmp #$0D        ; retorno de carro
         beq @jcr
         cmp #$1D        ; cursor a la derecha
@@ -188,6 +197,18 @@ KCHROUT:
 @jcls:  jmp @cls
 @setcol: stx KCOLOR     ; X = indice de color 0..15
         jmp @done
+@jrvson: lda #$80        ; inverso ON: bit 7 en el screencode
+        sta KRVS
+        jmp @done
+@jrvsoff: lda #$00
+        sta KRVS
+        jmp @done
+@jlower: lda #$17        ; $D018 bit1=1 -> juego de texto (minusculas)
+        sta $D018
+        jmp @done
+@jupper: lda #$15        ; $D018 bit1=0 -> juego mayusculas/graficos
+        sta $D018
+        jmp @done
 @clasif:
         cmp #$20
         bcs @ok1
@@ -207,7 +228,8 @@ KCHROUT:
         and #$7F        ; PETSCII $C0-$FF -> $40-$7F
         sec
         sbc #$40        ; -> codigo de pantalla $00-$3F (letras = letras)
-@store: ldy KCOL
+@store: ora KRVS        ; inverso: bit 7 si esta activo
+        ldy KCOL
         sta (KPNT),Y
         ; escribir el color actual en la RAM de color ($D800 = KPNT+$D400)
         lda KPNT
@@ -830,6 +852,7 @@ KLSTART = $02EC
 KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
 KCOLOR  = $0286         ; color actual del cursor/texto
+KRVS    = $02DF         ; flag de inverso ($00/$80)
 KLNK    = $02C0         ; tabla de enlace de lineas (25 bytes, $02C0-$02D8)
 KROW    = $02D9         ; fila del cursor 0-24
 KEDROW  = $02DA         ; fila donde empezo la entrada
