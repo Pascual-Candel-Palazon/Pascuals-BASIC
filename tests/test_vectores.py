@@ -132,6 +132,24 @@ def main():
     ok &= caso("liturgia cartucho: timer IRQ corriendo",
                mq.mem[0xDC0E] & 1 == 1)
 
+
+    # --- rutinas de la tabla que necesitan los cartuchos (no IEC) ---
+    mq = Maquina(); mq.teclear(b"", 3_000_000); m = mq.mpu
+    def llamar(addr, x=0, y=0, c=0):
+        m.x, m.y = x, y
+        if c: m.p |= 0x01
+        else: m.p &= ~0x01
+        mq.subrutina(addr, 40000)
+        return m.x, m.y
+    x, y = llamar(0xFFED);        ok &= caso("SCREEN -> 40x25", (x, y) == (40, 25))
+    x, y = llamar(0xFF99, c=1);   ok &= caso("MEMTOP -> $A000", x | y << 8 == 0xA000)
+    x, y = llamar(0xFF9C, c=1);   ok &= caso("MEMBOT -> $0800", x | y << 8 == 0x0800)
+    x, y = llamar(0xFFF3);        ok &= caso("IOBASE -> $DC00", x | y << 8 == 0xDC00)
+    llamar(0xFFF0, x=5, y=10, c=0)
+    x, y = llamar(0xFFF0, c=1);   ok &= caso("PLOT fija/lee (5,10)", (x, y) == (5, 10))
+    ok &= caso("CLALL retorna", mq.subrutina(0xFFE7, 20000))
+    ok &= caso("CLRCHN retorna", mq.subrutina(0xFFCC, 20000))
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@
 ; --- RAM propia del kernal (fuera de las zonas que usa el BASIC) ---
 KVPTR   = $C3
 KCPTR   = $FB           ; puntero ZP a la RAM de color
+KMSGFL  = $009D         ; flags de mensajes del kernal
+KLDTND  = $0098         ; numero de ficheros abiertos
+KDFLTN  = $0099         ; dispositivo de entrada por defecto
+KDFLTO  = $009A         ; dispositivo de salida por defecto
 KPNT    = $D1           ; puntero a linea actual de pantalla (lo/hi)
 KCOL    = $D3           ; columna del cursor (0-39)
 KNDX    = $C6           ; numero de teclas en bufer
@@ -93,6 +97,19 @@ KRAMTAS:
         sta KTIME       ; reloj jiffy a cero
         sta KTIME+1
         sta KTIME+2
+        ; punteros e indices de E/S por defecto
+        lda #$00
+        sta KMBOT       ; inicio de memoria = $0800
+        sta KLDTND
+        sta KDFLTN      ; entrada por defecto = teclado
+        lda #$08
+        sta KMBOT+1
+        lda #$00
+        sta KMTOP       ; tope de memoria = $A000
+        lda #$A0
+        sta KMTOP+1
+        lda #$03
+        sta KDFLTO      ; salida por defecto = pantalla
         rts
 
 ; ------------------------------------------------------------
@@ -1017,6 +1034,9 @@ KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
 KCOLOR  = $0286         ; color actual del cursor/texto
 KGDCOL  = $0287         ; color guardado bajo el cursor (ubicacion C64)
+KMBOT   = $0281         ; inicio de memoria (2 bytes)
+KMTOP   = $0283         ; tope de memoria (2 bytes)
+
 KRVS    = $02DF         ; flag de inverso ($00/$80)
 KCTRL   = $02E0
 KCBM    = $02E1
@@ -1244,6 +1264,94 @@ KRPT    = $02BA
 KSTUB:  clc
         rts
 
+; ------------------------------------------------------------
+; Rutinas de la tabla de saltos que no dependen del bus IEC.
+; ------------------------------------------------------------
+; SETMSG ($FF90): A = flags de mensajes del kernal
+KSETMSG:
+        sta KMSGFL
+        rts
+; MEMTOP ($FF99): C=1 leer (X/Y), C=0 fijar
+KMEMTOP:
+        bcc @set
+        ldx KMTOP
+        ldy KMTOP+1
+        rts
+@set:   stx KMTOP
+        sty KMTOP+1
+        rts
+; MEMBOT ($FF9C): C=1 leer (X/Y), C=0 fijar
+KMEMBOT:
+        bcc @set
+        ldx KMBOT
+        ldy KMBOT+1
+        rts
+@set:   stx KMBOT
+        sty KMBOT+1
+        rts
+; SCREEN ($FFED): X=columnas, Y=filas
+KSCREEN:
+        ldx #40
+        ldy #25
+        rts
+; PLOT ($FFF0): C=1 leer (X=fila,Y=col), C=0 fijar
+KPLOT:  bcc @set
+        ldx KROW
+        ldy KCOL
+        rts
+@set:   stx KROW
+        sty KCOL
+        ; KPNT = SCREEN + fila*40
+        lda #<SCREEN
+        sta KPNT
+        lda #>SCREEN
+        sta KPNT+1
+        cpx #$00
+        beq @done
+@m:     clc
+        lda KPNT
+        adc #40
+        sta KPNT
+        bcc @m2
+        inc KPNT+1
+@m2:    dex
+        bne @m
+@done:  rts
+; IOBASE ($FFF3): X/Y = base de E/S (CIA1 = $DC00)
+KIOBASE:
+        ldx #$00
+        ldy #$DC
+        rts
+; SETTIM ($FFDB): fijar el reloj jiffy (A/X/Y = medio/...)
+KSETTIM:
+        sei
+        sta KTIME+2
+        stx KTIME+1
+        sty KTIME
+        cli
+        rts
+; RDTIM ($FFDE): leer el reloj jiffy
+KRDTIM:
+        sei
+        lda KTIME+2
+        ldx KTIME+1
+        ldy KTIME
+        cli
+        rts
+; CLRCHN ($FFCC): canales de E/S a por defecto (teclado in, pantalla out)
+KCLRCHN:
+        lda #$00
+        sta KDFLTN      ; dispositivo de entrada = 0 (teclado)
+        lda #$03
+        sta KDFLTO      ; dispositivo de salida = 3 (pantalla)
+        clc
+        rts
+; CLALL ($FFE7): cerrar todos los ficheros y resetear canales
+KCLALL:
+        lda #$00
+        sta KLDTND      ; numero de ficheros abiertos = 0
+        jmp KCLRCHN
+
 
 ; ------------------------------------------------------------
 ; SYS (delta C64): evalua la expresion con las rutinas del BASIC
@@ -1262,11 +1370,11 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KRAMTAS     ; $FF87 RAMTAS
         jmp KRESTOR     ; $FF8A RESTOR
         jmp KVECTOR     ; $FF8D VECTOR
-        jmp KSTUB       ; $FF90 SETMSG
+        jmp KSETMSG     ; $FF90 SETMSG
         jmp KSTUB       ; $FF93 SECOND
         jmp KSTUB       ; $FF96 TKSA
-        jmp KSTUB       ; $FF99 MEMTOP
-        jmp KSTUB       ; $FF9C MEMBOT
+        jmp KMEMTOP     ; $FF99 MEMTOP
+        jmp KMEMBOT     ; $FF9C MEMBOT
         jmp KSCNKEY     ; $FF9F SCNKEY
         jmp KSTUB       ; $FFA2 SETTMO
         jmp KSTUB       ; $FFA5 ACPTR
@@ -1282,20 +1390,20 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KSTUB       ; $FFC3 CLOSE
         jmp KSTUB       ; $FFC6 CHKIN
         jmp KSTUB       ; $FFC9 CHKOUT
-        jmp KSTUB       ; $FFCC CLRCHN
+        jmp KCLRCHN     ; $FFCC CLRCHN
         jmp ($0324)     ; $FFCF CHRIN  (IBASIN)
         jmp ($0326)     ; $FFD2 CHROUT (IBSOUT)
         jmp KSTUB       ; $FFD5 LOAD
         jmp KSTUB       ; $FFD8 SAVE
-        jmp KSTUB       ; $FFDB SETTIM
-        jmp KSTUB       ; $FFDE RDTIM
+        jmp KSETTIM     ; $FFDB SETTIM
+        jmp KRDTIM      ; $FFDE RDTIM
         jmp ($0328)     ; $FFE1 STOP  (ISTOP)
         jmp ($032A)     ; $FFE4 GETIN (IGETIN)
-        jmp KSTUB       ; $FFE7 CLALL
+        jmp KCLALL      ; $FFE7 CLALL
         jmp KUDTIM      ; $FFEA UDTIM
-        jmp KSTUB       ; $FFED SCREEN
-        jmp KSTUB       ; $FFF0 PLOT
-        jmp KSTUB       ; $FFF3 IOBASE
+        jmp KSCREEN     ; $FFED SCREEN
+        jmp KPLOT       ; $FFF0 PLOT
+        jmp KIOBASE     ; $FFF3 IOBASE
 
 .org $FFFA
         .word KNMIENT   ; NMI
