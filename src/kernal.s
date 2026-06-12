@@ -70,6 +70,9 @@ KRESET: sei
         lda #$00
         sta KNDX
         sta KRVS
+        sta KCTRL
+        sta KCBM
+        sta KCASE
         sta KSHIFT
         sta KBLON
         sta KBLSW
@@ -431,6 +434,35 @@ KSCNKEY:
         beq @nors
         inc KSHIFT
 @nors:
+        ; --- CTRL (col7 bit2) y C= (col7 bit5) ---
+        lda #$00
+        sta KCTRL
+        sta KCBM
+        lda KMATRIX+7
+        and #$04
+        beq @noctrl
+        inc KCTRL
+@noctrl: lda KMATRIX+7
+        and #$20
+        beq @nocbm
+        inc KCBM
+@nocbm:
+        ; --- SHIFT+C= conmuta el caso (deteccion de flanco) ---
+        lda KSHIFT
+        beq @combof
+        lda KCBM
+        beq @combof
+        lda KCASE
+        bne @afterc
+        lda $D018
+        eor #$02
+        sta $D018
+        lda #$01
+        sta KCASE
+        jmp @afterc
+@combof: lda #$00
+        sta KCASE
+@afterc:
         ; --- detectar flancos y traducir ---
         ldx #$00
 @cmpc:  lda KMATRIX,X
@@ -455,12 +487,8 @@ KSCNKEY:
         adc KTMP2
         stx KTMP2       ; preservar X
         tax
-        lda KSHIFT
-        beq @nosh
-        lda KEYTABS,X   ; tabla con shift
-        jmp @gotch
-@nosh:  lda KEYTAB,X
-@gotch: beq @restx      ; tecla sin asignar: descartar
+        jsr KXLATE
+        beq @restx      ; tecla sin asignar: descartar
         ldx KTMP2
         sty KTMP2       ; preservar Y
         ; --- registrar la tecla para la repeticion ---
@@ -517,12 +545,8 @@ KSCNKEY:
         sta KRPT
         ; re-traducir con el shift actual
         ldx KLIDX
-        lda KSHIFT
-        beq @rpns
-        lda KEYTABS,X
-        jmp @rpch
-@rpns:  lda KEYTAB,X
-@rpch:  beq @norpt
+        jsr KXLATE
+        beq @norpt
         ; ¿es repetible? espacio, cursores, DEL, INS
         ldx #$06
 @rptst: cmp KRPTSET,X
@@ -566,6 +590,45 @@ KEYTABS:
         .byte '+','P','L','-','>','[','@','<'
         .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
         .byte '!',$5F,$00,'"',' ',$00,'Q',$03  ; shift+2 = comillas
+
+; tabla CTRL (CTRL+1..8 colores, +9/0 inverso on/off)
+KEYTABT:
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $1C,$00,$00,$9F,$00,$00,$00,$00
+        .byte $9C,$00,$00,$1E,$00,$00,$00,$00
+        .byte $1F,$00,$00,$9E,$00,$00,$00,$00
+        .byte $12,$00,$00,$92,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $90,$00,$00,$05,$00,$00,$00,$00
+; tabla C= (Commodore+1..8 colores claros)
+KEYTABC:
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $96,$00,$00,$97,$00,$00,$00,$00
+        .byte $98,$00,$00,$99,$00,$00,$00,$00
+        .byte $9A,$00,$00,$9B,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00
+        .byte $81,$00,$00,$95,$00,$00,$00,$00
+
+; X = indice 0-63 -> A = PETSCII segun modificadores (preserva Y).
+; Prioridad: CTRL > C= > SHIFT > normal.
+KXLATE:
+        lda KCTRL
+        bne @ct
+        lda KCBM
+        bne @cb
+        lda KSHIFT
+        bne @sh
+        lda KEYTAB,X
+        rts
+@ct:    lda KEYTABT,X
+        rts
+@cb:    lda KEYTABC,X
+        rts
+@sh:    lda KEYTABS,X
+        rts
 
 ; PETSCII de los 16 codigos de color: CTRL+1..8 (0..7), C=+1..8 (8..15)
 KCOLTAB:
@@ -665,7 +728,7 @@ KCHRIN: ldx KLLEN
         cmp #$91        ; arriba
         beq @jup2
         cmp #$20
-        bcc @bucle      ; controles: ignorar en el editor
+        bcc @ctl        ; controles: aplicar via KCHROUT (color/inverso/caso)
         cmp #$60
         bcc @imp        ; $20-$5F: directo
         cmp #$7B
@@ -673,9 +736,11 @@ KCHRIN: ldx KLLEN
         sec
         sbc #$20        ; $61-$7A (minusculas estilo ASCII) -> $41-$5A
         jmp @imp
+@ctl:   jsr KCHROUT     ; codigos de control: color/inverso/caso aplican
+        jmp @bucle
 @jfin:  jmp @fin
 @alta:  cmp #$C1
-        bcc @bucle
+        bcc @ctl        ; $80-$C0 (color/inverso/caso altos) via KCHROUT
         cmp #$DB
         bcs @bucle
         and #$7F        ; $C1-$DA (PETSCII mayusculas) -> $41-$5A
@@ -853,6 +918,9 @@ KLROW   = $02ED         ; (2 bytes)
 KLLAST  = $02EF
 KCOLOR  = $0286         ; color actual del cursor/texto
 KRVS    = $02DF         ; flag de inverso ($00/$80)
+KCTRL   = $02E0
+KCBM    = $02E1
+KCASE   = $02E2         ; flanco de SHIFT+C=
 KLNK    = $02C0         ; tabla de enlace de lineas (25 bytes, $02C0-$02D8)
 KROW    = $02D9         ; fila del cursor 0-24
 KEDROW  = $02DA         ; fila donde empezo la entrada
