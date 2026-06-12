@@ -627,13 +627,13 @@ KEYTAB:
 ; tabla con shift
 KEYTABS:
         .byte $94,$0D,$9D,$00,$00,$00,$00,$91  ; INS RET <-cursor ... ^cursor
-        .byte '#','W','A','$','Z','S','E',$00
-        .byte '%','R','D','&','C','F','T','X'
-        .byte $27,'Y','G','(','B','H','U','V'  ; $27 = apostrofe
-        .byte ')','I','J','0','M','K','O','N'
-        .byte '+','P','L','-','>','[','@','<'
+        .byte '#','W'+$80,'A'+$80,'$','Z'+$80,'S'+$80,'E'+$80,$00
+        .byte '%','R'+$80,'D'+$80,'&','C'+$80,'F'+$80,'T'+$80,'X'+$80
+        .byte $27,'Y'+$80,'G'+$80,'(','B'+$80,'H'+$80,'U'+$80,'V'+$80
+        .byte ')','I'+$80,'J'+$80,'0','M'+$80,'K'+$80,'O'+$80,'N'+$80
+        .byte '+','P'+$80,'L'+$80,'-','>','[','@','<'
         .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
-        .byte '!',$5F,$00,'"',' ',$00,'Q',$03  ; shift+2 = comillas
+        .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$03  ; shift+2 = comillas
 
 ; tabla CTRL (CTRL+1..8 colores, +9/0 inverso on/off)
 KEYTABT:
@@ -787,7 +787,7 @@ KCHRIN: ldx KLLEN
         bcc @ctl        ; $80-$C0 (color/inverso/caso altos) via KCHROUT
         cmp #$DB
         bcs @bucle
-        and #$7F        ; $C1-$DA (PETSCII mayusculas) -> $41-$5A
+        jmp @imp        ; $C1-$DA: mayuscula/grafico shifted, imprimir tal cual
 @imp:   jsr KCUROFF
         jsr KCHROUT     ; imprimir (sobrescribe en el cursor)
         jmp @bucle
@@ -883,8 +883,13 @@ KCHRIN: ldx KLLEN
 @cp1:   lda (KVPTR),Y
         and #$7F
         cmp #$20
-        bcs @k1
+        bcc @k1a        ; sc 0-31 -> PETSCII $41-$5F
+        cmp #$40
+        bcc @k1         ; sc $20-$3F: identico
         clc
+        adc #$80        ; sc $40-$7E -> PETSCII $C0+ (mayus/graficos)
+        jmp @k1
+@k1a:   clc
         adc #$40
 @k1:    sta KLINE,X
         inx
@@ -909,8 +914,13 @@ KCHRIN: ldx KLLEN
 @cp2:   lda (KVPTR),Y
         and #$7F
         cmp #$20
-        bcs @k2
+        bcc @k2a        ; sc 0-31 -> PETSCII $41-$5F
+        cmp #$40
+        bcc @k2         ; sc $20-$3F: identico
         clc
+        adc #$80        ; sc $40-$7E -> PETSCII $C0+ (mayus/graficos)
+        jmp @k2
+@k2a:   clc
         adc #$40
 @k2:    sta KLINE,X
         inx
