@@ -35,6 +35,11 @@ KRESET: sei
         sta $01         ; si DDR se activa con datos=0, las ROMs se
         lda #$2F        ; desbancan con el PC dentro de ellas
         sta $00
+        ; --- ¿cartucho con firma CBM80 en $8004? ---
+        jsr KCBMCHK
+        bne @nocart
+        jmp ($8000)     ; vector frio del cartucho
+@nocart:
         ; --- CIAs: silenciar interrupciones ---
         lda #$7F
         sta $DC0D
@@ -1105,6 +1110,21 @@ KBRK:   pla
         pla
         rti
 
+
+; ¿firma de cartucho "CBM80" en $8004-$8008? Z=1 si esta
+KCBMCHK:
+        ldx #$04
+@c:     lda $8004,X
+        cmp KCBMSIG,X
+        bne @no
+        dex
+        bpl @c
+        lda #$00        ; Z=1: firma presente
+        rts
+@no:    lda #$01        ; Z=0
+        rts
+KCBMSIG: .byte $C3,$C2,$CD,$38,$30  ; "CBM80" en PETSCII
+
 ; NMI hardware: salva registros y despacha por ($0318)
 KNMIENT:
         pha
@@ -1113,8 +1133,13 @@ KNMIENT:
         tya
         pha
         jmp ($0318)
-; manejador por defecto del NMI: RUN/STOP-RESTORE = arranque en caliente
-KNMI:   lda $DD0D       ; reconocer/limpiar la fuente NMI del CIA2
+; manejador por defecto del NMI: cartucho primero; si no,
+; RUN/STOP-RESTORE = arranque en caliente
+KNMI:   jsr KCBMCHK     ; ¿cartucho CBM80?
+        bne @nocart
+        jmp ($8002)     ; vector caliente del cartucho
+@nocart:
+        lda $DD0D       ; reconocer/limpiar la fuente NMI del CIA2
         jsr KSTOPRAW    ; ¿RUN/STOP pulsada? (Z=1 si si) - sin romper
         bne @ign
         ; --- arranque en caliente: programa intacto, vuelta a READY ---
