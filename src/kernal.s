@@ -40,6 +40,17 @@ KRESET: sei
         bne @nocart
         jmp ($8000)     ; vector frio del cartucho
 @nocart:
+        jsr KIOINIT     ; CIAs, VIC, timer de jiffy
+        jsr KRAMTAS     ; limpiar areas de trabajo, reloj a cero
+        jsr KRESTOR     ; vectores de pagina 3 por defecto
+        jsr KCINT       ; editor de pantalla y teclado
+        cli
+        jmp INIT        ; arranque en frio del BASIC
+
+; ------------------------------------------------------------
+; IOINIT ($FF84): CIAs, VIC y reloj jiffy
+; ------------------------------------------------------------
+KIOINIT:
         ; --- CIAs: silenciar interrupciones ---
         lda #$7F
         sta $DC0D
@@ -56,6 +67,38 @@ KRESET: sei
         sta $DD02
         lda #$03
         sta $DD00
+        ; --- reloj jiffy: CIA1 timer A ~60 Hz ---
+        lda #$95
+        sta $DC04
+        lda #$42
+        sta $DC05
+        lda #$81        ; habilitar IRQ de timer A
+        sta $DC0D
+        lda #$11        ; arrancar timer, recarga continua
+        sta $DC0E
+        rts
+
+; ------------------------------------------------------------
+; RAMTAS ($FF87): limpiar areas de trabajo y reloj
+; ------------------------------------------------------------
+KRAMTAS:
+        lda #$00
+        tax
+@rt1:   sta $0002,X     ; pagina cero (sin tocar el puerto 6510)
+        inx
+        bne @rt1
+@rt2:   sta $0200,X     ; pagina 2 (bufers)
+        inx
+        bne @rt2
+        sta KTIME       ; reloj jiffy a cero
+        sta KTIME+1
+        sta KTIME+2
+        rts
+
+; ------------------------------------------------------------
+; CINT ($FF81): VIC de pantalla, editor y teclado
+; ------------------------------------------------------------
+KCINT:
         ; --- VIC-II ---
         lda #$1B
         sta $D011       ; modo texto, pantalla visible
@@ -71,7 +114,7 @@ KRESET: sei
         sta $D021       ; fondo azul
         ; --- limpiar pantalla y color ---
         jsr KCLS
-        ; --- estado de teclado ---
+        ; --- estado de teclado y editor ---
         lda #$00
         sta KNDX
         sta KRVS
@@ -93,18 +136,7 @@ KRESET: sei
 @mx:    sta KMATRIX,X
         dex
         bpl @mx
-        ; --- reloj jiffy: CIA1 timer A ~60 Hz ---
-        lda #$95
-        sta $DC04
-        lda #$42
-        sta $DC05
-        lda #$81        ; habilitar IRQ de timer A
-        sta $DC0D
-        lda #$11        ; arrancar timer, recarga continua
-        sta $DC0E
-        jsr KRESTOR     ; vectores de pagina 3 por defecto
-        cli
-        jmp INIT        ; arranque en frio del BASIC
+        rts
 
 ; ------------------------------------------------------------
 ; limpiar pantalla y posicionar cursor en (0,0)
@@ -1225,9 +1257,9 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
 ; Tabla de saltos estandar documentada
 ; ------------------------------------------------------------
 .org $FF81
-        jmp KCLS        ; $FF81 CINT
-        jmp KSTUB       ; $FF84 IOINIT
-        jmp KSTUB       ; $FF87 RAMTAS
+        jmp KCINT       ; $FF81 CINT
+        jmp KIOINIT     ; $FF84 IOINIT
+        jmp KRAMTAS     ; $FF87 RAMTAS
         jmp KRESTOR     ; $FF8A RESTOR
         jmp KVECTOR     ; $FF8D VECTOR
         jmp KSTUB       ; $FF90 SETMSG

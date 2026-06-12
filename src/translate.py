@@ -419,6 +419,11 @@ while i < len(lines):
 result = "\n".join(out) + "\n"
 # Fixups documentados: desviaciones minimas del original por limites de rango
 # en el layout traducido (la tecnica JEQ es la del propio fuente).
+# [C64] vectores de arranque en $A000: los cartuchos salen al BASIC
+# con JMP ($A000) (frio) o JMP ($A002) (caliente); el C64 real los tiene
+result = result.replace(".org ROMLOC  ",
+    ".org ROMLOC  \n\t.word INIT  ;[C64] vector frio ($A000)\n\t.word READY  ;[C64] vector caliente ($A002)")
+
 result = result.replace("FPWRT:\tBEQ\tEXP\t",
                         "FPWRT:\tJEQ\tEXP\t; [fixup: rama original fuera de rango en este layout]")
 if C64:

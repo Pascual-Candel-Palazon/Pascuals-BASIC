@@ -109,6 +109,29 @@ def main():
     ok &= caso("VECTOR(cargar) aplica la tabla",
                mq.mem[0x0314] == 0x34 and mq.mem[0x0315] == 0x12)
 
+
+    # --- liturgia de cartucho: init por la tabla + salida JMP ($A000) ---
+    mq = Maquina()
+    m = mq.mpu
+    prog = [0x78, 0xA2, 0xFF, 0x9A,
+            0xA9, 0x37, 0x85, 0x01, 0xA9, 0x2F, 0x85, 0x00,
+            0x20, 0x84, 0xFF,   # IOINIT
+            0x20, 0x87, 0xFF,   # RAMTAS
+            0x20, 0x8A, 0xFF,   # RESTOR
+            0x20, 0x81, 0xFF,   # CINT
+            0x58,
+            0x6C, 0x00, 0xA0]   # JMP ($A000) frio
+    mq.mem.write(0xC000, prog)
+    m.pc = 0xC000
+    for n in range(4_000_000):
+        if n % 17000 == 0 and n and not (m.p & 0x04):
+            mq.irq()
+        m.step()
+    ok &= caso("liturgia cartucho: banner via JMP($A000)",
+               mq.pantalla_contiene("COMMODORE BASIC"))
+    ok &= caso("liturgia cartucho: timer IRQ corriendo",
+               mq.mem[0xDC0E] & 1 == 1)
+
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":
