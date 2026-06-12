@@ -793,14 +793,31 @@ KSCRCNT = $02F1
 ; ------------------------------------------------------------
 ; STOP: Z=1 si RUN/STOP pulsada
 ; ------------------------------------------------------------
-KSTOP:  lda #$7F        ; fila 7
+; ISTOP ($0328/$FFE1) tal como lo espera el BASIC PET: si RUN/STOP esta
+; pulsada, rompe la ejecucion saltando a STOP del BASIC (imprime BREAK
+; y vuelve a READY). Si no, devuelve con el flag.
+KSTOP:  jsr KSTOPRAW
+        bne @ret        ; no pulsada: volver con el flag
+        lda #$00        ; Z=1 y...
+        sec             ; ...C=1 -> STOP imprime "BREAK" y va a READY
+        jmp STOP
+@ret:   rts
+; escaneo puro de RUN/STOP (sin romper): Z=1 si pulsada. Lo usa el NMI.
+; Atomico: el IRQ tambien escanea la matriz; sin SEI, un IRQ entre la
+; lectura y el test simula una pulsacion. El resultado viaja en X, que
+; el IRQ preserva.
+KSTOPRAW:
+        php
+        sei
+        lda #$7F        ; fila 7
         sta $DC00
         lda $DC01
-        sta KTMP
+        and #$80        ; bit 7 = RUN/STOP
+        tax             ; resultado a X (sobrevive a un IRQ)
         lda #$00
         sta $DC00
-        lda KTMP
-        and #$80        ; bit 7 = RUN/STOP
+        plp
+        txa             ; A = resultado, fija Z
         rts             ; Z=1 si pulsada
 
 ; ------------------------------------------------------------
@@ -867,10 +884,30 @@ KBRK:   pla
         pla
         rti
 
-; NMI hardware: despacho por ($0318)
+; NMI hardware: salva registros y despacha por ($0318)
 KNMIENT:
+        pha
+        txa
+        pha
+        tya
+        pha
         jmp ($0318)
-KNMI:   rti
+; manejador por defecto del NMI: RUN/STOP-RESTORE = arranque en caliente
+KNMI:   lda $DD0D       ; reconocer/limpiar la fuente NMI del CIA2
+        jsr KSTOPRAW    ; ¿RUN/STOP pulsada? (Z=1 si si) - sin romper
+        bne @ign
+        ; --- arranque en caliente: programa intacto, vuelta a READY ---
+        ldx #$FF
+        txs             ; resetear la pila
+        cli
+        jsr KRESTOR     ; restaurar vectores de pagina 3
+        jmp READY       ; entrada en caliente del BASIC
+@ign:   pla             ; NMI espuria: restaurar y volver
+        tay
+        pla
+        tax
+        pla
+        rti
 
 ; --- tabla ROM de vectores por defecto para pagina 3 ---
 KVECTAB:
