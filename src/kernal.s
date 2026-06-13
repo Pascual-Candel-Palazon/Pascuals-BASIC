@@ -17,6 +17,7 @@ KLDTND  = $0098         ; numero de ficheros abiertos
 KDFLTN  = $0099         ; dispositivo de entrada por defecto
 KDFLTO  = $009A         ; dispositivo de salida por defecto
 KSTATUS = $0090         ; estado de E/S del kernal
+KVERCK  = $0093         ; flag load(0)/verify(1)
 KFNLEN  = $00B7         ; longitud del nombre de fichero
 KLA     = $00B8         ; fichero logico actual
 KSA     = $00B9         ; direccion secundaria actual
@@ -1498,6 +1499,46 @@ BOPEN:  lda #$01
 BCLOSE: jsr GETBYT      ; fichero logico -> X
         txa
         jsr KCLOSE
+        rts
+
+; ------------------------------------------------------------
+; Parsers del lado BASIC para LOAD y SAVE. Igual que OPEN, el MS los
+; despacha crudos al kernal sin parsear. Parsean ["nombre"][,disp][,sec]
+; y dejan el estado listo (SETNAM/SETLFS). La transferencia por el bus
+; (handshake) se engancha en @bus cuando exista.
+; ------------------------------------------------------------
+; comun: parsea [nombre][,dispositivo][,secundaria] en KFNLEN/KFA/KSA
+BPARSE: lda #$01
+        sta KFA         ; dispositivo por defecto = 1 (cinta)
+        lda #$00
+        sta KSA
+        sta KFNLEN      ; sin nombre
+        sta KLA         ; LOAD/SAVE usan fichero logico 0
+        jsr CHRGOT      ; ¿hay argumentos?
+        beq @fin
+        jsr FRMEVL      ; evaluar la cadena del nombre
+        jsr FRESTR      ; A=longitud, X=lo, Y=hi
+        sta KFNLEN
+        stx KFNADR
+        sty KFNADR+1
+        jsr CHRGOT
+        beq @fin
+        jsr COMBYT      ; ,dispositivo -> X
+        stx KFA
+        jsr CHRGOT
+        beq @fin
+        jsr COMBYT      ; ,secundaria -> X
+        stx KSA
+@fin:   rts
+; LOAD ["nombre"][,dispositivo][,secundaria]
+BLOAD:  jsr BPARSE
+        lda #$00        ; 0 = LOAD (1 seria VERIFY)
+        sta KVERCK
+        ; (handshake pendiente) JSR KLOAD aqui, luego relink del BASIC
+        rts
+; SAVE ["nombre"][,dispositivo][,secundaria]
+BSAVE:  jsr BPARSE
+        ; (handshake pendiente) JSR KSAVE aqui
         rts
 
 ; ------------------------------------------------------------

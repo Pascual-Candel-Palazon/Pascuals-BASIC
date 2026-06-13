@@ -433,6 +433,9 @@ result = result.replace("CQCLOS=^O177703", "CQCLOS=BCLOSE  ; [C64] parser BASIC"
 import re as _re
 result = _re.sub(r"CQOPEN\s*=\s*65472", "CQOPEN = BOPEN", result)
 result = _re.sub(r"CQCLOS\s*=\s*65475", "CQCLOS = BCLOSE", result)
+result = _re.sub(r"CQLOAD\s*=\s*65493", "CQLOAD = BLOAD", result)
+result = _re.sub(r"CQSAVE\s*=\s*65496", "CQSAVE = BSAVE", result)
+
 
 result = result.replace("FPWRT:\tBEQ\tEXP\t",
                         "FPWRT:\tJEQ\tEXP\t; [fixup: rama original fuera de rango en este layout]")
