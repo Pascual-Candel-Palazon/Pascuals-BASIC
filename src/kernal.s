@@ -754,7 +754,11 @@ KSHIFT  = $02AB
 ; ------------------------------------------------------------
 ; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
 ; ------------------------------------------------------------
-KGETIN: txa
+KGETIN: lda KDFLTN
+        cmp #$04
+        bcc @noser
+        jmp KSERIN      ; entrada desde el bus serie
+@noser: txa
         pha             ; preservar X e Y: INLIN del BASIC depende de ello
         tya
         pha
@@ -795,7 +799,11 @@ KTMP3   = $02AA
 ; PETSCII) y se sirve al BASIC caracter a caracter. Limite v1:
 ; la linea logica es una fila (40 columnas).
 ; ------------------------------------------------------------
-KCHRIN: ldx KLLEN
+KCHRIN: lda KDFLTN
+        cmp #$04
+        bcc @noser
+        jmp KSERIN      ; entrada desde el bus serie
+@noser: ldx KLLEN
         beq @editar     ; no hay linea pendiente: entrar al editor
 @servir:
         ldx KLPOS
@@ -1356,7 +1364,15 @@ KRDTIM:
         rts
 ; CLRCHN ($FFCC): canales de E/S a por defecto (teclado in, pantalla out)
 KCLRCHN:
-        lda #$00
+        lda KDFLTN
+        cmp #$04
+        bcc @noin
+        jsr KUNTLK      ; cerrar el talker serie
+@noin:  lda KDFLTO
+        cmp #$04
+        bcc @noout
+        jsr KUNLSN      ; cerrar el listener serie
+@noout: lda #$00
         sta KDFLTN      ; dispositivo de entrada = 0 (teclado)
         lda #$03
         sta KDFLTO      ; dispositivo de salida = 3 (pantalla)
@@ -1590,6 +1606,20 @@ KISEND: sta KBSOUR2
         clc
         rts
 
+KSERIN: txa
+        pha
+        tya
+        pha
+        jsr KACPTR
+        sta KTMP3
+        pla
+        tay
+        pla
+        tax
+        lda KTMP3
+        clc
+        rts
+
 KSDLY:  txa
         pha
         ldx #$0A
@@ -1597,6 +1627,72 @@ KSDLY:  txa
         bne @d
         pla
         tax
+        rts
+
+; ACPTR ($FFA5): recibir un byte del talker. Espejo de KISEND.
+; Dato valido con CLOCK alto. EOI -> bit6 de KSTATUS. C=1 si timeout.
+; Estado de entrada (tras TKSA): oyente con DATA bajo, talker con CLOCK bajo.
+KACPTR: sei
+        jsr KDATHI          ; soltar DATA: listo para recibir
+        ; --- esperar CLOCK alto (talker listo) con timeout EOI (16 bits) ---
+        ldx #$00
+        ldy #$00
+@w1:    lda SERPRT
+        and #B_CLKIN
+        bne @rdy            ; CLOCK alto -> el talker va a enviar
+        iny
+        bne @w1
+        inx
+        bne @w1
+        ; --- timeout: el talker retiene CLOCK = EOI (ultimo byte) ---
+        lda KSTATUS
+        ora #$40
+        sta KSTATUS         ; senalar EOI
+        jsr KDATLO          ; pulso de reconocimiento de EOI
+        ldx #$20
+@eod:   dex
+        bne @eod
+        jsr KDATHI
+@w1b:   lda SERPRT          ; ahora esperar CLOCK alto (ya sin EOI)
+        and #B_CLKIN
+        beq @w1b
+@rdy:   lda #$08
+        sta KBITCNT
+@bit:   ldx #$00            ; esperar CLOCK bajo (preparacion del bit)
+        ldy #$00
+@bl:    lda SERPRT
+        and #B_CLKIN
+        beq @bhw
+        iny
+        bne @bl
+        inx
+        bne @bl
+        jmp @to
+@bhw:   ldx #$00            ; esperar CLOCK alto (bit valido)
+        ldy #$00
+@bh:    lda SERPRT
+        and #B_CLKIN
+        bne @rd
+        iny
+        bne @bh
+        inx
+        bne @bh
+        jmp @to
+@rd:    lda SERPRT          ; leer DATA (alto=1)
+        and #B_DATIN
+        asl                 ; C = DATA alto
+        ror KBSOUR2         ; LSB primero via ROR
+        dec KBITCNT
+        bne @bit
+        jsr KDATLO          ; reconocer byte recibido (DATA bajo)
+        lda KBSOUR2
+        cli
+        clc
+        rts
+@to:    lda #$80
+        sta KSTATUS         ; timeout: dispositivo no presente
+        cli
+        sec
         rts
 
 
@@ -1707,8 +1803,14 @@ KCHKIN: txa
         rts
 @hay:   lda KFAT,X
         sta KDFLTN      ; dispositivo de entrada = el del fichero
-        ; (fase 2: si serie, enviar TALK + direccion secundaria)
-        clc
+        cmp #$04
+        bcc @done       ; no serie: listo
+        lda KFAT,X
+        jsr KTALK       ; A = dispositivo -> TALK (preserva X)
+        lda KSAT,X
+        ora #$60        ; secundaria de TALK
+        jsr KTKSA
+@done:  clc
         rts
 ; CHKOUT ($FFC9): X = fichero logico -> canal de salida
 KCHKOUT: txa
@@ -1719,8 +1821,13 @@ KCHKOUT: txa
         rts
 @hay:   lda KFAT,X
         sta KDFLTO      ; dispositivo de salida = el del fichero
-        ; (fase 2: si serie, enviar LISTEN + direccion secundaria)
-        clc
+        cmp #$04
+        bcc @done       ; no serie: listo
+        jsr KLISTN      ; A = dispositivo -> LISTEN (preserva X)
+        lda KSAT,X
+        ora #$60        ; secundaria de LISTEN
+        jsr KSECND
+@done:  clc
         rts
 
 ; ------------------------------------------------------------
@@ -1877,7 +1984,7 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KMEMBOT     ; $FF9C MEMBOT
         jmp KSCNKEY     ; $FF9F SCNKEY
         jmp KSTUB       ; $FFA2 SETTMO
-        jmp KSTUB       ; $FFA5 ACPTR
+        jmp KACPTR      ; $FFA5 ACPTR
         jmp KCIOUT      ; $FFA8 CIOUT
         jmp KUNTLK      ; $FFAB UNTLK
         jmp KUNLSN      ; $FFAE UNLSN
