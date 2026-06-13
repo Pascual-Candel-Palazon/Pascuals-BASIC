@@ -1658,30 +1658,27 @@ KACPTR: sei
         beq @w1b
 @rdy:   lda #$08
         sta KBITCNT
-@bit:   ldx #$00            ; esperar CLOCK bajo (preparacion del bit)
+@bit:   ldx #$00            ; esperar CLOCK alto (frontera de bit)
         ldy #$00
-@bl:    lda SERPRT
-        and #B_CLKIN
-        beq @bhw
+@bhw:   lda SERPRT
+        asl                 ; N = CLOCK (bit6)
+        bmi @bl             ; CLOCK alto -> esperar el flanco de bajada
         iny
-        bne @bl
+        bne @bhw
         inx
-        bne @bl
+        bne @bhw
         jmp @to
-@bhw:   ldx #$00            ; esperar CLOCK alto (bit valido)
+@bl:    ldx #$00            ; esperar CLOCK bajo y muestrear DATA atomico
         ldy #$00
 @bh:    lda SERPRT
-        and #B_CLKIN
-        bne @rd
+        asl                 ; C = DATA (bit7), N = CLOCK (bit6)
+        bpl @rd             ; CLOCK bajo -> C = DATA en el flanco de bajada
         iny
         bne @bh
         inx
         bne @bh
         jmp @to
-@rd:    lda SERPRT          ; leer DATA (alto=1)
-        and #B_DATIN
-        asl                 ; C = DATA alto
-        ror KBSOUR2         ; LSB primero via ROR
+@rd:    ror KBSOUR2         ; meter el bit DATA (LSB primero)
         dec KBITCNT
         bne @bit
         jsr KDATLO          ; reconocer byte recibido (DATA bajo)
