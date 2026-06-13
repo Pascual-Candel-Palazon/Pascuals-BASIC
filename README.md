@@ -20,9 +20,17 @@ Funciona hoy:
 - Cursor parpadeante; scroll
 - Vectores RAM de pagina 3: IRQ/BRK/NMI redirigibles ($0314+), E/S
   interceptable ($031A-$0333), RESTOR y VECTOR
+- Bus serie IEC, lado de ENVIO: `OPEN15,8,15,"i0"` completa con `ST=0`
+  (la unidad acepta LISTEN, direccion secundaria, nombre y UNLISTEN).
+  Parsing del BASIC de OPEN/CLOSE/LOAD/SAVE completo.
 
-Pendiente (en orden): vectores del lado BASIC (IGONE/ICRNCH para
-wedges de comandos), juego de caracteres propio, LOAD/SAVE por bus IEC.
+En curso (WIP): RECEPCION por el bus IEC (`ACPTR` + entrada serie). El
+handshake completa sin colgarse pero el byte recibido aun no es correcto.
+Ver el analisis y los proximos pasos en **`docs/CONTINUIDAD.md`** (el
+documento de handoff con todo el contexto tecnico para retomar).
+
+Pendiente (en orden): terminar recepcion IEC, LOAD/SAVE por el bus,
+juego de caracteres propio, vectores del lado BASIC (IGONE/ICRNCH).
 
 Mejoras candidatas post-1.0:
 
