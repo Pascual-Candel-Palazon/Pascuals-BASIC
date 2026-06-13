@@ -18,6 +18,12 @@ KDFLTN  = $0099         ; dispositivo de entrada por defecto
 KDFLTO  = $009A         ; dispositivo de salida por defecto
 KSTATUS = $0090         ; estado de E/S del kernal
 KVERCK  = $0093         ; flag load(0)/verify(1)
+KATNF   = $0094         ; bit7: byte bajo ATN
+KBSOUR  = $0095         ; byte serie a enviar (diferido)
+KC3PO   = $00A3         ; bit7: hay byte CIOUT pendiente
+KEOIF   = $00A4         ; bit7: senalar EOI
+KBSOUR2 = $00A5         ; byte en curso de envio (se desplaza)
+KBITCNT = $00A6         ; contador de bits
 KFNLEN  = $00B7         ; longitud del nombre de fichero
 KLA     = $00B8         ; fichero logico actual
 KSA     = $00B9         ; direccion secundaria actual
@@ -1362,6 +1368,238 @@ KCLALL:
         sta KLDTND      ; numero de ficheros abiertos = 0
         jmp KCLRCHN
 
+; ============================================================
+; Bus serie IEC (fase 2b). Protocolo desde especificacion publica
+; (Butterfield / Programmer's Reference), NUNCA desde el desensamblado
+; de las rutinas serie de Commodore. Polaridad medida empiricamente:
+;   OUT (bits 3/4/5 ATN/CLK/DATA): 1 = tirar la linea a BAJO (asertar)
+;   IN  (bits 6/7 CLK/DATA): 1 = ALTA (liberada), 0 = BAJA (asertada)
+; ============================================================
+SERPRT  = $DD00
+B_ATN   = $08
+B_CLK   = $10
+B_DATA  = $20
+B_CLKIN = $40
+B_DATIN = $80
+
+KCLKLO: lda SERPRT
+        ora #B_CLK
+        sta SERPRT
+        rts
+KCLKHI: lda SERPRT
+        and #($FF - B_CLK)
+        sta SERPRT
+        rts
+KDATLO: lda SERPRT
+        ora #B_DATA
+        sta SERPRT
+        rts
+KDATHI: lda SERPRT
+        and #($FF - B_DATA)
+        sta SERPRT
+        rts
+KATNLO: lda SERPRT
+        ora #B_ATN
+        sta SERPRT
+        rts
+KATNHI: lda SERPRT
+        and #($FF - B_ATN)
+        sta SERPRT
+        rts
+
+; LISTEN ($FFB1): A = dispositivo
+KLISTN: ora #$20
+KLSTN2: pha
+        jsr KATNLO
+        jsr KCLKLO
+        jsr KDATHI
+        jsr KATNDLY     ; dar tiempo a los dispositivos a responder a ATN
+        pla
+        sec
+        ror KATNF       ; modo ATN
+        jmp KISEND
+
+; TALK ($FFB4): A = dispositivo
+KTALK:  ora #$40
+        jmp KLSTN2
+
+; SECOND ($FF93): A = secundaria tras LISTEN
+KSECND: sec
+        ror KATNF
+        jsr KISEND
+        jsr KATNHI      ; liberar ATN: empieza la fase de datos
+        rts
+
+; retardo de respuesta a ATN (~1ms)
+KATNDLY:txa
+        pha
+        tya
+        pha
+        ldx #$04
+@o:     ldy #$00
+@i:     dey
+        bne @i
+        dex
+        bne @o
+        pla
+        tay
+        pla
+        tax
+        rts
+
+; TKSA ($FF96): A = secundaria tras TALK, con turnaround talker->oyente
+KTKSA:  sec
+        ror KATNF
+        jsr KISEND
+        jsr KDATLO      ; somos oyentes: asertar DATA
+        jsr KATNHI      ; liberar ATN
+        jsr KCLKHI      ; liberar CLOCK
+        ldx #$00
+        ldy #$00
+@tw:    lda SERPRT
+        and #B_CLKIN
+        beq @twok       ; CLK bajo -> la unidad habla
+        iny
+        bne @tw
+        inx
+        bne @tw
+        lda #$80        ; timeout: dispositivo no presente
+        sta KSTATUS
+@twok:  rts
+
+; CIOUT ($FFA8): A = byte de datos (envio diferido para el EOI)
+KCIOUT: bit KC3PO
+        bmi @send
+        sec
+        ror KC3PO       ; marcar pendiente
+        jmp @store
+@send:  pha
+        lda KBSOUR
+        clc
+        ror KATNF       ; modo datos (bit7=0)
+        jsr KISEND
+        pla
+@store: sta KBSOUR
+        rts
+
+; UNLSN ($FFAE): enviar el ultimo byte con EOI y luego UNLISTEN
+KUNLSN: jsr KISCLR
+        lda #$3F
+        sec
+        ror KATNF
+        jsr KATNLO
+        jsr KISEND
+        jmp KATNFIN
+; UNTLK ($FFAB): UNTALK
+KUNTLK: sec
+        ror KATNF
+        jsr KATNLO
+        lda #$5F
+        jsr KISEND
+KATNFIN:jsr KATNHI
+        jsr KCLKHI
+        rts
+
+; KISCLR: si hay byte pendiente, enviarlo con EOI
+KISCLR: bit KC3PO
+        bpl @no
+        sec
+        ror KEOIF       ; senalar EOI en este ultimo byte
+        lda KBSOUR
+        clc
+        ror KATNF
+        jsr KISEND
+        lsr KC3PO
+@no:    rts
+
+; KISEND: enviar un byte (A). KATNF bit7=ATN, KEOIF bit7=EOI.
+; C=1 si timeout (dispositivo no presente).
+KISEND: sta KBSOUR2
+        sei             ; el timing serie no tolera interrupciones
+        lda KBSOUR2
+        jsr KCLKLO
+        jsr KDATHI
+        ldy #$00
+@wr:    lda SERPRT
+        and #B_DATIN
+        bne @ready
+        iny
+        bne @wr
+        lda #$80
+        sta KSTATUS
+        cli
+        sec
+        rts
+@ready: jsr KCLKHI
+        bit KEOIF
+        bpl @noeoi
+        ; EOI: esperar el ack del oyente (DATA bajo y luego alto), con timeout
+        ldx #$00
+        ldy #$00
+@e1:    lda SERPRT
+        and #B_DATIN
+        beq @e1b        ; DATA bajo -> ack EOI recibido
+        iny
+        bne @e1
+        inx
+        bne @e1
+        jmp @toeoi      ; timeout EOI
+@e1b:   ldx #$00
+        ldy #$00
+@e2:    lda SERPRT
+        and #B_DATIN
+        bne @noeoi      ; DATA alto otra vez -> seguir
+        iny
+        bne @e2
+        inx
+        bne @e2
+@toeoi: lda #$80
+        sta KSTATUS
+        cli
+        sec
+        rts
+@noeoi: jsr KCLKLO
+        lda #$08
+        sta KBITCNT
+@bit:   lda KBSOUR2
+        lsr
+        sta KBSOUR2
+        bcs @one
+        jsr KDATLO
+        jmp @clk
+@one:   jsr KDATHI
+@clk:   jsr KCLKHI
+        jsr KSDLY
+        jsr KCLKLO
+        jsr KDATHI
+        dec KBITCNT
+        bne @bit
+        ldy #$00
+@fr:    lda SERPRT
+        and #B_DATIN
+        beq @ok
+        iny
+        bne @fr
+        lda #$80
+        sta KSTATUS
+        cli
+        sec
+        rts
+@ok:    lsr KEOIF
+        cli
+        clc
+        rts
+
+KSDLY:  txa
+        pha
+        ldx #$0A
+@d:     dex
+        bne @d
+        pla
+        tax
+        rts
+
+
 ; ------------------------------------------------------------
 ; Andamiaje de E/S (fase 1 IEC): gestion de estado, sin bus todavia.
 ; ------------------------------------------------------------
@@ -1413,8 +1651,28 @@ KOPEN:  lda KLA
         lda KSA
         sta KSAT,X
         inc KLDTND
-        ; (fase 2: si KFA es serie, abrir el canal por el bus)
-        clc
+        ; --- si es dispositivo serie (>=4), abrir el canal por el bus ---
+        lda KFA
+        cmp #$04
+        bcc @done
+        lda KFA
+        jsr KLISTN
+        lda KSA
+        ora #$F0        ; OPEN + canal
+        jsr KSECND
+        ldy #$00
+@nm:    cpy KFNLEN
+        beq @nmend
+        tya
+        pha             ; guardar el indice (KISEND destruye Y)
+        lda (KFNADR),Y
+        jsr KCIOUT
+        pla
+        tay             ; restaurar el indice
+        iny
+        bne @nm
+@nmend: jsr KUNLSN
+@done:  clc
         rts
 ; CLOSE ($FFC3): A = fichero logico a cerrar
 KCLOSE: jsr KFINDFL
@@ -1613,18 +1871,18 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KRESTOR     ; $FF8A RESTOR
         jmp KVECTOR     ; $FF8D VECTOR
         jmp KSETMSG     ; $FF90 SETMSG
-        jmp KSTUB       ; $FF93 SECOND
-        jmp KSTUB       ; $FF96 TKSA
+        jmp KSECND      ; $FF93 SECOND
+        jmp KTKSA       ; $FF96 TKSA
         jmp KMEMTOP     ; $FF99 MEMTOP
         jmp KMEMBOT     ; $FF9C MEMBOT
         jmp KSCNKEY     ; $FF9F SCNKEY
         jmp KSTUB       ; $FFA2 SETTMO
         jmp KSTUB       ; $FFA5 ACPTR
-        jmp KSTUB       ; $FFA8 CIOUT
-        jmp KSTUB       ; $FFAB UNTLK
-        jmp KSTUB       ; $FFAE UNLSN
-        jmp KSTUB       ; $FFB1 LISTEN
-        jmp KSTUB       ; $FFB4 TALK
+        jmp KCIOUT      ; $FFA8 CIOUT
+        jmp KUNTLK      ; $FFAB UNTLK
+        jmp KUNLSN      ; $FFAE UNLSN
+        jmp KLISTN      ; $FFB1 LISTEN
+        jmp KTALK       ; $FFB4 TALK
         jmp KSTUB       ; $FFB7 READST
         jmp KSETLFS     ; $FFBA SETLFS
         jmp KSETNAM     ; $FFBD SETNAM
