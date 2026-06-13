@@ -33,10 +33,16 @@ for k, (pc, dest) in enumerate(starts):
         length = len(data) - off
     img[dest:dest + length] = data[off:off + length]
     off += length
-open("basic_c64.bin", "wb").write(img[0xA000:0xC000])
-open("kernal_c64.bin", "wb").write(img[0xE000:0x10000])
-print(f"basic_c64.bin: 8192 bytes | kernal_c64.bin: 8192 bytes")
-print(f"vector RESET: ${img[0xFFFC] | img[0xFFFD]<<8:04X}")
+bas = img[0xA000:0xC000]
+ker = img[0xE000:0x10000]
+# sanidad: el desajuste listado<->binario produce kernal corto y boot negro
+reset = img[0xFFFC] | (img[0xFFFD] << 8) if len(img) >= 0x10000 else 0
+assert len(img) == 0x10000, f"img encogio a {len(img)} (listado desincronizado con c64_full.bin)"
+assert len(ker) == 8192, f"kernal mide {len(ker)}, no 8192 (vectores perdidos)"
+assert reset != 0, "vector RESET nulo: kernal invalido"
+open("basic_c64.bin", "wb").write(bas)
+open("kernal_c64.bin", "wb").write(ker)
+print(f"basic_c64.bin: {len(bas)} bytes | kernal_c64.bin: {len(ker)} bytes | RESET=${reset:04X}")
 
 # ---------------- prueba de humo ----------------
 from py65.devices.mpu6502 import MPU
