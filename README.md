@@ -1,91 +1,97 @@
-# ROMs libres para Commodore 64
+# Free ROMs for the Commodore 64
 
-ROMs de sustitucion (BASIC + KERNAL) para el Commodore 64 **de serie**
-(16 KB de ROM, sin banking adicional), con licencia permisiva y cadena
-de procedencia auditable. El espiritu es el de AltirraOS / Altirra
-BASIC en el mundo Atari de 8 bits: una alternativa libre que arranca,
-se programa y se comporta como la maquina real.
+Drop-in replacement ROMs (BASIC + KERNAL) for the **stock** Commodore 64
+(16 KB of ROM, no extra banking), under a permissive license with an
+auditable provenance chain. The spirit is that of AltirraOS / Altirra
+BASIC in the Atari 8-bit world: a free alternative that boots, programs
+and behaves like the real machine.
 
-## Estado
+## Status
 
-Funciona hoy:
+Working and verified (functionally, in VICE, against a real 1541 used as
+an opaque peripheral):
 
-- Arranque: `**** PASCUAL'S BASIC ****` / `38911 BYTES FREE`
-- Interprete completo (fuente MIT de Microsoft, v1.1 de 1978): coma
-  flotante, cadenas, FOR/GOSUB, programas con lineas numeradas, RUN,
-  LIST, PEEK/POKE de RAM/ROM/E-S, SYS y USR
-- Editor de pantalla v1 (WYSIWYG): cursores, DEL que recoge el texto,
-  lineas logicas de 2 filas (80 col.), tolerante al paste de VICE
-- Teclado completo por IRQ: matriz, shift, repeticion de tecla
-- Cursor parpadeante; scroll
-- Vectores RAM de pagina 3: IRQ/BRK/NMI redirigibles ($0314+), E/S
-  interceptable ($031A-$0333), RESTOR y VECTOR
-- Bus serie IEC, lado de ENVIO: `OPEN15,8,15,"i0"` completa con `ST=0`
-  (la unidad acepta LISTEN, direccion secundaria, nombre y UNLISTEN).
-  Parsing del BASIC de OPEN/CLOSE/LOAD/SAVE completo.
+- Boot: `**** PASCUAL'S BASIC ****` / `38911 BYTES FREE`
+- Full interpreter (Microsoft MIT source, v1.1, 1978): floating point,
+  strings, FOR/GOSUB, numbered-line programs, RUN, LIST, PEEK/POKE of
+  RAM/ROM/I-O, SYS and USR
+- WYSIWYG screen editor: cursor keys, DEL that reflows text, 2-row
+  logical lines (80 columns), tolerant of VICE paste
+- Full IRQ keyboard: matrix, shift, key repeat (space, cursors, DEL/INST)
+- Blinking cursor; screen scroll
+- Page-3 RAM vectors: redirectable IRQ/BRK/NMI (`$0314+`), interceptable
+  I/O (`$031A-$0333`), RESTOR and VECTOR
+- **Complete IEC serial bus** (verified byte by byte against a real 1541):
+  send, receive (with EOI), serial OPEN/CLOSE/CHKIN/CHKOUT, READST,
+  LOAD/SAVE/VERIFY, `LOAD"$",8` (directory) + LIST, and reading the
+  command/error channel (15). BASIC program round-trip (SAVE/NEW/LOAD/RUN)
+  works.
+- Filename wildcards (matched by the 1541) and chained LOAD: a `LOAD`
+  inside a running program re-runs the loaded program from its first
+  line, preserving variables
+- Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
+  `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
+- `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
 
-En curso (WIP): RECEPCION por el bus IEC (`ACPTR` + entrada serie). El
-handshake completa sin colgarse pero el byte recibido aun no es correcto.
-Ver el analisis y los proximos pasos en **`docs/CONTINUIDAD.md`** (el
-documento de handoff con todo el contexto tecnico para retomar).
+The full technical handoff (architecture, memory map, build chain,
+verification method, lessons learned, roadmap) lives in
+**`docs/CONTINUIDAD.md`**.
 
-Pendiente (en orden): terminar recepcion IEC, LOAD/SAVE por el bus,
-juego de caracteres propio, vectores del lado BASIC (IGONE/ICRNCH).
+## Roadmap
 
-Mejoras candidatas post-1.0:
+- Own character generator (chargen) to replace the temporary borrowed one
+- Datasette (tape) LOAD/SAVE
+- Linear string garbage collector: the BASIC inherits Microsoft's
+  original quadratic GC (long pauses with thousands of strings). To be
+  improved using the published algorithm (back-pointer technique),
+  **never** from disassembled Commodore ROMs (BASIC 3.5/7.0); see
+  `docs/PROCEDENCIA.md`. Prerequisite: a GC stress-test suite against the
+  current one as a baseline (integrity + timing).
+- Future sister project: a free 1541 drive ROM (same clean-room method;
+  the GCR format and IEC protocol are publicly specified). Meanwhile,
+  VICE `-iecdevice8` for emulation and SD2IEC (already-free firmware) for
+  real hardware.
 
-- **Recolector de basura de cadenas**: el BASIC hereda el GC cuadratico
-  original de Microsoft (pausas largas con miles de cadenas). Mejorable
-  implementando un GC lineal desde la descripcion algoritmica publicada
-  (tecnica de back-pointers), NUNCA desde desensamblados de ROMs de
-  Commodore (BASIC 3.5/7.0) - vease docs/PROCEDENCIA.md. Requisito
-  previo: bateria de tests de estres del GC contra el actual como
-  referencia (integridad + tiempos).
-
-Proyecto hermano futuro: ROM libre de la unidad 1541 (mismo metodo de
-sala limpia; formato GCR y protocolo IEC estan especificados
-publicamente). Mientras tanto: VICE -iecdevice8 para emulacion y
-SD2IEC (firmware ya libre) para hardware real.
-
-## Uso
+## Usage
 
 ```
 x64sc -kernal bin/kernal_c64.bin -basic bin/basic_c64.bin -chargen bin/chargen.bin
 ```
 
-## Construccion
+## Building
 
-Requisitos: `python3`, `cc65`, y `py65` para los tests
+Requirements: `python3`, `cc65`, and `py65` for the tests
 (`pip install py65`).
 
 ```
-./build.sh        # genera bin/basic_c64.bin y bin/kernal_c64.bin
+./build.sh        # produces bin/basic_c64.bin and bin/kernal_c64.bin
 cd tests
 python3 test_humo.py
 python3 test_teclado.py
 python3 test_editor.py
 ```
 
-## Arquitectura y procedencia
+## Architecture and provenance
 
-- **BASIC** (`$A000-$BFFF` y cola en `$E000`): derivado mecanicamente
-  del fuente oficial MIT de Microsoft (`upstream/m6502.asm`, repo
-  microsoft/BASIC-M6502) mediante `src/flatten.py` (resuelve los
-  condicionales MACRO-10 con REALIO=3, el target Commodore) y
-  `src/translate.py` (MACRO-10 -> ca65). Cada adaptacion al C64 esta
-  anotada `[C64]` en el fuente generado: mapa de memoria, puerto del
-  6510, tope de RAM, SYS/USR propios, candado anti-PEEK eliminado.
-- **KERNAL** (`$E200+`): escrito desde cero para este proyecto, desde
-  la interfaz publica documentada y el comportamiento observable.
-  Politica estricta en `docs/PROCEDENCIA.md`.
-- **CHARGEN**: temporalmente el de MEGA65 open-roms (licencia de
-  terceros, vease su proyecto); pendiente de sustitucion.
+- **BASIC** (`$A000-$BFFF`, with its tail at `$E000`): mechanically
+  derived from Microsoft's official MIT source (`upstream/m6502.asm`, the
+  microsoft/BASIC-M6502 repo) via `src/flatten.py` (which resolves the
+  MACRO-10 conditionals with REALIO=3, the Commodore target) and
+  `src/translate.py` (MACRO-10 -> ca65). Every C64 adaptation is annotated
+  `[C64]` in the generated source: memory map, 6510 port, RAM top, custom
+  SYS/USR, removed anti-PEEK lock, long error messages.
+- **KERNAL** (`$E200+`): written from scratch for this project, from the
+  documented public interface and observable behavior. Strict policy in
+  `docs/PROCEDENCIA.md`.
+- **CHARGEN**: temporarily the one from MEGA65 open-roms (third-party
+  license, see their project); pending replacement.
 
-La verificacion de no-similitud con las ROMs originales debe hacerla
-un tercero: este proyecto no las descarga ni desensambla.
+This project never downloads or disassembles the original ROMs. Any
+non-similarity verification against them should be performed by a third
+party.
 
-## Licencia
+## License
 
-- Codigo propio (KERNAL, scripts, tests): MIT (LICENSE)
-- BASIC: MIT de Microsoft (upstream/LICENSE-microsoft)
-- chargen.bin: de MEGA65 open-roms, licencia propia de ese proyecto
+- Own code (KERNAL, scripts, tests): MIT (`LICENSE`)
+- BASIC: Microsoft's MIT (`upstream/LICENSE-microsoft`)
+- `chargen.bin`: from MEGA65 open-roms, under that project's own license
