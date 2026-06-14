@@ -2038,10 +2038,24 @@ BLOAD:  jsr BPARSE
         bne @lret
         stx VARTAB      ; X/Y = fin+1 devuelto por KLOAD
         sty VARTAB+1
-        ; CLR de variables: igualar ARYTAB y STREND a VARTAB y liberar
-        ; cadenas (FRETOP=MEMSIZ). Sin esto quedan obsoletos (en el inicio
-        ; del programa tras NEW) y al crear la 1a variable se corrompe el
-        ; programa. No se toca la pila (a diferencia de CLEARC/STKINI).
+        jsr LNKPRG      ; reenlazar los punteros de linea del BASIC
+        ; Comportamiento dependiente del modo (interfaz observable, spec
+        ; publica del LOAD: nivel B):
+        ;  - DIRECTO (CURLIN+1=$FF): CLR de punteros (ARYTAB=STREND=VARTAB,
+        ;    FRETOP=MEMSIZ). Sin esto quedan obsoletos y al crear la 1a
+        ;    variable tras el LOAD se corrompe el programa. No se toca la
+        ;    pila (a diferencia de CLEARC/STKINI). Vuelve a READY.
+        ;  - PROGRAMA (LOAD encadenado): NO se borran variables (el
+        ;    encadenado pasa datos entre partes), se reapunta el texto al
+        ;    inicio del programa cargado y se RE-EJECUTA desde la primera
+        ;    linea. Se repone la pila a la base (STKINI) para no acumular
+        ;    marcos entre saltos de cadena. No se vuelve aqui.
+        lda CURLIN+1
+        cmp #$FF
+        bne @prog
+        ; --- modo directo: CLR de punteros ---
+        ldx VARTAB
+        ldy VARTAB+1
         stx ARYTAB
         sty ARYTAB+1
         stx STREND
@@ -2050,8 +2064,11 @@ BLOAD:  jsr BPARSE
         sta FRETOP
         lda MEMSIZ+1
         sta FRETOP+1
-        jsr LNKPRG      ; reenlazar los punteros de linea del BASIC
 @lret:  rts
+        ; --- modo programa: re-RUN encadenado, sin borrar variables ---
+@prog:  jsr STXTPT      ; TXTPTR = TXTTAB-1 (antes de la 1a linea)
+        jsr STKINI      ; pila a la base, prohibe CONT; NO toca variables
+        jmp NEWSTT      ; ejecutar desde la primera linea del nuevo programa
 ; SAVE ["nombre"][,dispositivo][,secundaria]
 BSAVE:  jsr BPARSE
         jsr KDIRMSG     ; mensajes de control segun modo directo/programa
