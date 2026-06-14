@@ -10,7 +10,7 @@ se programa y se comporta como la maquina real.
 
 Funciona hoy:
 
-- Arranque: `### COMMODORE BASIC ###` / `38911 BYTES FREE`
+- Arranque: `**** PASCUAL'S BASIC ****` / `38911 BYTES FREE`
 - Interprete completo (fuente MIT de Microsoft, v1.1 de 1978): coma
   flotante, cadenas, FOR/GOSUB, programas con lineas numeradas, RUN,
   LIST, PEEK/POKE de RAM/ROM/E-S, SYS y USR

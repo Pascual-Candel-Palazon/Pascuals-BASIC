@@ -35,7 +35,7 @@ def main():
     pant = "".join(chr(64 + mq.mem[0x0400 + i]) if 1 <= mq.mem[0x0400 + i] <= 26
                    else " " for i in range(40))
     ok &= caso("sin banner tras saltar al cartucho",
-               "COMMODORE" not in pant)
+               "PASCUAL" not in pant)
 
     # --- sin firma: arranque normal ---
     mq = Maquina()
@@ -46,7 +46,7 @@ def main():
             mq.irq()
         m.step()
     ok &= caso("sin firma: arranca el BASIC normal",
-               mq.pantalla_contiene("COMMODORE BASIC"))
+               mq.pantalla_contiene("PASCUAL"))
 
     # --- NMI con cartucho: salta por ($8002) ---
     mq = Maquina()
@@ -142,7 +142,7 @@ def main():
             mq.irq()
         m.step()
     ok &= caso("liturgia cartucho: banner via JMP($A000)",
-               mq.pantalla_contiene("COMMODORE BASIC"))
+               mq.pantalla_contiene("PASCUAL"))
     ok &= caso("liturgia cartucho: timer IRQ corriendo",
                mq.mem[0xDC0E] & 1 == 1)
 
