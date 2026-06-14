@@ -492,7 +492,7 @@ if C64:
 # upstream (que se conserva intacto con su licencia MIT original).
 result = result.replace(
     '\tDT "### COMMODORE BASIC ###"',
-    '\tDT "PASCUAL\'S BASIC"')
+    '\tDT "       **** PASCUAL\'S BASIC ****"')
 open(OUT, "w").write(result)
 print(f"avisos: {len(warn)}")
 for w in warn[:10]:
