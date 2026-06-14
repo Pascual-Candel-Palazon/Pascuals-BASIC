@@ -485,6 +485,14 @@ if C64:
     # Delta C64: vector USR en el $0310 estandar (POKE 785/786), no en ZP.
     result = result.replace("USRPOK:\tJMP\tFCERR\t;SET UP ORIG BY INIT.",
                             "USRPOK = 784 ;[C64] vector USR en $0310 estandar")
+# [C64] Banner de arranque: sustituir la cadena de marca registrada de
+# Commodore por el nombre propio del proyecto. La cadena original del
+# upstream MIT es "### COMMODORE BASIC ###" (REALIO=3, generada por
+# flatten.py). Se cambia aqui, en la capa de traduccion, sin tocar el
+# upstream (que se conserva intacto con su licencia MIT original).
+result = result.replace(
+    '\tDT "### COMMODORE BASIC ###"',
+    '\tDT "PASCUAL\'S BASIC"')
 open(OUT, "w").write(result)
 print(f"avisos: {len(warn)}")
 for w in warn[:10]:
