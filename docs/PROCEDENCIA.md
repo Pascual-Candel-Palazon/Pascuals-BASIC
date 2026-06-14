@@ -56,8 +56,11 @@ usan solo las partes de nivel A/B y se anota.
 - **KERNAL**: escritura original de este proyecto desde niveles A y B.
   Posiciones de RAM propias salvo las elegidas deliberadamente en
   ubicaciones documentadas por compatibilidad (anotado en el fuente).
-- **CHARGEN**: actualmente el de MEGA65 open-roms (licencia de terceros,
-  pendiente de sustitución por un juego propio).
+- **CHARGEN** (`bin/chargen.bin`): la fuente PXL de MEGA65 Open ROMs
+  (autor Retrofan), incluida tal cual bajo LGPL-3.0-or-later. Es el unico
+  componente no-MIT; textos de licencia y atribucion en `licenses/chargen/`.
+  Idéntica bit a bit a chargen_openroms.rom (sha256 5e3451...). Puente
+  temporal, pendiente de sustitución por un juego propio.
 
 ## Estado de cumplimiento (autoauditoría continua)
 
