@@ -146,7 +146,9 @@ xvfb-run -a x64sc -default \
   envio, recepcion (con EOI), OPEN/CLOSE/CHKIN/CHKOUT serie, READST,
   LOAD/SAVE/VERIFY, `LOAD"$",8` (directorio) + LIST, y lectura del canal
   de comandos/errores (15) por INPUT#. Round-trip de programa BASIC
-  (SAVE/NEW/LOAD/RUN) funciona. Variables reservadas `ST`/`TI`/`TI$`
+  (SAVE/NEW/LOAD/RUN) funciona. Comodines en nombres (matching del 1541) y
+  LOAD encadenado (SA=0 en programa re-ejecuta desde el inicio conservando
+  variables) verificados (sec. 9). Variables reservadas `ST`/`TI`/`TI$`
   operativas (ST lee KSTATUS $90; TI/TI$ leen el jiffy del KERNAL $A0).
 
 ### IEC: estado por fases
@@ -309,13 +311,51 @@ lectura del canal de comandos/errores (15) por `INPUT#` (devuelve el
 "73,CBM DOS V2.6 1541,00,00" de power-up). VERIFY da "?VERIFY ERROR" en
 discrepancia (BVERIFY, con CQVERF redirigido en translate.py). Ver sec. 5/6.
 
+HECHO y VERIFICADO (esta sesion, contra el 1541 real en VICE true-drive):
+- **Comodines en nombres**: ya funcionaban sin codigo. El nombre se envia
+  verbatim por el bus (bucle `@nm` de KLOAD/KSAVE/KOPEN, sin filtrar `*`/`?`);
+  el matching lo hace el DOS del 1541. Verificado: `LOAD"TE*",8` casa con
+  "TEST" y carga. No hay nada que implementar en el lado C64.
+- **Semantica re-RUN del LOAD encadenado (SA=0)**: implementada. Ver detalle
+  abajo. `10 LOAD"PARTE2",8` carga PARTE2 y re-ejecuta desde su primera
+  linea, conservando variables.
+
 Pendiente:
-1. **LOAD/SAVE casos restantes**: nombres con comodines, semantica de LOAD
-   dentro de un programa en ejecucion (CBM re-RUN para SA=0; ahora continua
-   a la siguiente linea, que basta para cargadores SA=1).
-2. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
+1. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
    descripcion algoritmica publica, NUNCA desensamblados); ROM libre del
    1541 (proyecto hermano).
+
+### LOAD encadenado (re-RUN, SA=0) y comodines (HECHO)
+Implementado en `BLOAD` (`@lok`, src/kernal.s). Tras un LOAD con SA=0 se fija
+VARTAB=fin y se reenlaza (LNKPRG); a partir de ahi el comportamiento depende
+del modo (interfaz observable, spec publica del LOAD = nivel B):
+- **Directo** (CURLIN+1=$FF): CLR de punteros (ARYTAB=STREND=VARTAB,
+  FRETOP=MEMSIZ) y RTS -> READY. Identico al comportamiento previo (fix de
+  corrupcion al crear la 1a variable tras un LOAD directo). Sin tocar pila.
+- **Programa** (LOAD encadenado): NO se borran variables (el encadenado pasa
+  datos entre partes, por spec). Se reapunta el texto al inicio del programa
+  cargado (`STXTPT`, TXTPTR=TXTTAB-1), se repone la pila a la base (`STKINI`,
+  que ademas prohibe CONT y NO toca variables) y se re-ejecuta desde la
+  primera linea (`JMP NEWSTT`). STKINI evita acumular marcos de pila entre
+  saltos de cadena.
+Simbolos del BASIC MIT usados (alcanzables como LNKPRG): STXTPT, STKINI,
+NEWSTT. STKINI solo repone SP + temporales de cadena + OLDTXT+1 + SUBFLG;
+no toca ARYTAB/STREND/VARTAB/FRETOP, por eso conserva variables.
+
+Verificado en VICE true-drive contra el 1541 real:
+- Re-RUN: part1 (`10 print"parte uno":20 load"part2",8:30 print"no-deberia-verse"`)
+  + part2 (`10 print"parte dos ok"`) -> imprime "parte uno" y "parte dos ok";
+  la linea 30 de part1 NO se ejecuta (re-ejecuta part2 desde el inicio).
+- Variables conservadas: con partes de IGUAL longitud (VARTAB no se mueve),
+  vp1 fija x=42 y vp2 imprime "x vale 42". Caveat de spec (igual que CBM): si
+  la parte cargada tiene distinta longitud, VARTAB se desplaza y las
+  variables previas quedan desalineadas (no se borran, pero pueden no
+  localizarse). El encadenado fiable usa partes de longitud comparable.
+- Comodin: `LOAD"TE*",8` carga "TEST".
+- Sin regresion en modo directo: `load"test",8 : a=5 : print a : list` da
+  a=5 y el programa intacto.
+NOTA: esta semantica se valida SOLO en VICE (necesita un LOAD real completo,
+que py65 no modela). No hay test py65 dedicado; la evidencia es la de VICE.
 
 ### Dispositivo no presente y CLR tras LOAD (HECHO, esta sesion)
 - OPEN/LOAD/SAVE a un dispositivo ausente dan `?DEVICE NOT PRESENT ERROR`
