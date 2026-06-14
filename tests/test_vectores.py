@@ -90,6 +90,20 @@ def main():
     ok &= caso("RESTOR restaura los vectores",
                list(mq.mem[0x0314:0x0334]) == defecto)
 
+    # --- vectores de E/S de pagina 3 instalados (no KSTUB) ---
+    mq = Maquina()
+    mq.teclear(b"", 3_000_000)
+    def _vec(a): return mq.mem[a] | (mq.mem[a + 1] << 8)
+    iopen = _vec(0x031A); iclose = _vec(0x031C); ichkin = _vec(0x031E)
+    ickout = _vec(0x0320); iclrch = _vec(0x0322); iclall = _vec(0x032C)
+    iload = _vec(0x0330); isave = _vec(0x0332)
+    enrom = lambda v: 0xE000 <= v <= 0xFFFF
+    todos = (iopen, iclose, ichkin, ickout, iclrch, iclall, iload, isave)
+    ok &= caso("vectores E/S de pagina 3 en ROM del KERNAL",
+               all(enrom(v) for v in todos))
+    ok &= caso("vectores E/S apuntan a rutinas distintas (no KSTUB)",
+               len({iopen, iclose, ichkin, ickout, iclrch, iload, isave}) == 7)
+
     # --- VECTOR: leer (C=1) y cargar (C=0) la tabla ---
     mq = Maquina()
     mq.teclear(b"", 3_000_000)

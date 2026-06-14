@@ -435,6 +435,17 @@ result = _re.sub(r"CQOPEN\s*=\s*65472", "CQOPEN = BOPEN", result)
 result = _re.sub(r"CQCLOS\s*=\s*65475", "CQCLOS = BCLOSE", result)
 result = _re.sub(r"CQLOAD\s*=\s*65493", "CQLOAD = BLOAD", result)
 result = _re.sub(r"CQSAVE\s*=\s*65496", "CQSAVE = BSAVE", result)
+result = _re.sub(r"CQVERF\s*=\s*65499", "CQVERF = BVERIFY", result)
+# [C64] la variable ST del BASIC lee CQSTAT; nuestro KERNAL guarda el
+# estado de E/S en $90 (KSTATUS=144), no en $96 (150). Alinear ambos.
+result = result.replace("CQSTAT=^O226", "CQSTAT=^O220")
+result = _re.sub(r"CQSTAT\s*=\s*150", "CQSTAT = 144", result)
+# [C64] TI/TI$ leen el reloj en CQTIMR (3 bytes big-endian). Apuntarlo al
+# reloj jiffy del KERNAL en $A0-$A2 (KTIME), que la IRQ incrementa a 60Hz.
+# GETTIM lee 5 bytes desde CQTIMR-2 ($9E); $9E/$9F los limpia RAMTAS y nadie
+# los reescribe, asi que la mantissa alta queda en 0 y el valor = jiffies.
+result = result.replace("CQTIMR=^O215", "CQTIMR=^O240")
+result = _re.sub(r"CQTIMR\s*=\s*141", "CQTIMR = 160", result)
 
 
 result = result.replace("FPWRT:\tBEQ\tEXP\t",

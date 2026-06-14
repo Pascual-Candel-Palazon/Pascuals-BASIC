@@ -24,6 +24,10 @@ KC3PO   = $00A3         ; bit7: hay byte CIOUT pendiente
 KEOIF   = $00A4         ; bit7: senalar EOI
 KBSOUR2 = $00A5         ; byte en curso de envio (se desplaza)
 KBITCNT = $00A6         ; contador de bits
+KSERHI  = $00A7         ; byte alto del timeout RFD (espera de oyente)
+KLDPTR  = $00AE         ; puntero destino/fin de LOAD-SAVE (lo/hi)
+KLDTMP  = $00AC         ; byte bajo temporal de la direccion de carga
+KSAVPTR = $00C1         ; puntero de trabajo de SAVE (lo/hi)
 KFNLEN  = $00B7         ; longitud del nombre de fichero
 KLA     = $00B8         ; fichero logico actual
 KSA     = $00B9         ; direccion secundaria actual
@@ -219,6 +223,23 @@ KCHROUT:
         pha
         tya
         pha
+        ; --- si la salida por defecto es a dispositivo serie (>=4),
+        ;     enviar el byte por el bus IEC en vez de a pantalla. ---
+        lda KDFLTO
+        cmp #$04
+        bcc @noserout
+        tsx
+        lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
+        jsr KCIOUT      ; CIOUT (envio diferido); destruye X/Y, restaurados al salir
+        pla
+        tay
+        pla
+        tax
+        pla
+        plp
+        clc
+        rts
+@noserout:
         ; --- apagar el cursor si esta encendido ---
         lda KBLON
         beq @nocur
@@ -1236,19 +1257,19 @@ KVECTAB:
         .word KIRQ      ; $0314 CINV
         .word KBRK      ; $0316 CBINV
         .word KNMI      ; $0318 NMINV
-        .word KSTUB     ; $031A IOPEN
-        .word KSTUB     ; $031C ICLOSE
-        .word KSTUB     ; $031E ICHKIN
-        .word KSTUB     ; $0320 ICKOUT
-        .word KSTUB     ; $0322 ICLRCH
+        .word KOPEN     ; $031A IOPEN
+        .word KCLOSE    ; $031C ICLOSE
+        .word KCHKIN    ; $031E ICHKIN
+        .word KCHKOUT   ; $0320 ICKOUT
+        .word KCLRCHN   ; $0322 ICLRCH
         .word KCHRIN    ; $0324 IBASIN
         .word KCHROUT   ; $0326 IBSOUT
         .word KSTOP     ; $0328 ISTOP
         .word KGETIN    ; $032A IGETIN
-        .word KSTUB     ; $032C ICLALL
-        .word KSTUB     ; $032E USRCMD
-        .word KSTUB     ; $0330 ILOAD
-        .word KSTUB     ; $0332 ISAVE
+        .word KCLALL    ; $032C ICLALL
+        .word KSTUB     ; $032E USRCMD (vector libre, sin uso en C64)
+        .word KLOAD     ; $0330 ILOAD
+        .word KSAVE     ; $0332 ISAVE
 KVECEND:
 
 ; RESTOR ($FF8A): restaurar los vectores por defecto
@@ -1286,6 +1307,10 @@ KLIDX   = $02B9
 KRPT    = $02BA
 
 KSTUB:  clc
+        rts
+
+; READST ($FFB7): devolver el estado de E/S del kernal (ST).
+KREADST:lda KSTATUS
         rts
 
 ; ------------------------------------------------------------
@@ -1430,6 +1455,15 @@ KLSTN2: pha
         jsr KCLKLO
         jsr KDATHI
         jsr KATNDLY     ; dar tiempo a los dispositivos a responder a ATN
+        ; chequeo de presencia: un dispositivo presente asierta DATA (bajo) como
+        ; ack de ATN. DATA alto tras el settle = no hay dispositivo.
+        lda SERPRT
+        and #B_DATIN
+        beq @present
+        lda KSTATUS
+        ora #$80        ; bit7: dispositivo no presente
+        sta KSTATUS
+@present:
         pla
         sec
         ror KATNF       ; modo ATN
@@ -1500,18 +1534,30 @@ KCIOUT: bit KC3PO
 
 ; UNLSN ($FFAE): enviar el ultimo byte con EOI y luego UNLISTEN
 KUNLSN: jsr KISCLR
+        lda KSTATUS
+        pha             ; preservar el estado real de la transferencia
         lda #$3F
         sec
         ror KATNF
         jsr KATNLO
-        jsr KISEND
+        jsr KCLKLO      ; CLOCK asertado durante ATN
+        jsr KATNDLY     ; dar tiempo al dispositivo a responder a la re-asercion de ATN
+        jsr KISEND      ; byte de liberacion: su handshake no es fiable ni relevante
+        pla
+        sta KSTATUS     ; restaurar (el dispositivo libera el bus, no hace ack)
         jmp KATNFIN
 ; UNTLK ($FFAB): UNTALK
-KUNTLK: sec
+KUNTLK: lda KSTATUS
+        pha
+        sec
         ror KATNF
         jsr KATNLO
+        jsr KCLKLO      ; CLOCK asertado durante ATN
+        jsr KATNDLY     ; settle de ATN
         lda #$5F
         jsr KISEND
+        pla
+        sta KSTATUS
 KATNFIN:jsr KATNHI
         jsr KCLKHI
         rts
@@ -1532,24 +1578,34 @@ KISCLR: bit KC3PO
 ; C=1 si timeout (dispositivo no presente).
 KISEND: sta KBSOUR2
         sei             ; el timing serie no tolera interrupciones
-        lda KBSOUR2
-        jsr KCLKLO
-        jsr KDATHI
+        jsr KDATHI      ; liberar NUESTRA DATA (la posee el oyente)
+        jsr KCLKHI      ; liberar CLOCK = "emisor listo para enviar" (RTS)
+        ; esperar a que el oyente libere DATA (alto) = "listo para datos" (RFD).
+        ; timeout 16 bits: el dispositivo puede tardar en responder tras ATN.
+        ldx #$00
         ldy #$00
+        lda #$00
+        sta KSERHI      ; byte alto de cuenta (timeout RFD extendido)
 @wr:    lda SERPRT
         and #B_DATIN
-        bne @ready
+        bne @ready      ; DATA alto -> oyente listo
         iny
         bne @wr
-        lda #$80
-        sta KSTATUS
-        cli
-        sec
-        rts
-@ready: jsr KCLKHI
-        bit KEOIF
-        bpl @noeoi
-        ; EOI: esperar el ack del oyente (DATA bajo y luego alto), con timeout
+        inx
+        bne @wr
+        inc KSERHI
+        lda KSERHI
+        cmp #$40        ; ~58ms: un 1541 con fichero abierto tarda en hacer RFD
+        bne @wr
+        jmp @tmout      ; timeout RFD
+@ready: bit KEOIF       ; CLOCK ya esta alto desde RTS
+        bmi @iseoi
+        ; No-EOI: dar tiempo al oyente a entrar en su bucle de recepcion antes
+        ; de bajar CLOCK. Si se baja demasiado pronto el 1541 pierde la
+        ; transicion y, al expirar su Tne, lo interpreta como EOI (desincronia).
+        jsr KSDLY
+        jmp @noeoi
+@iseoi: ; EOI: esperar el ack del oyente (DATA bajo y luego alto), con timeout
         ldx #$00
         ldy #$00
 @e1:    lda SERPRT
@@ -1569,8 +1625,17 @@ KISEND: sta KBSOUR2
         bne @e2
         inx
         bne @e2
-@toeoi: lda #$80
-        sta KSTATUS
+@toeoi: jmp @tmout       ; timeout de ack de EOI
+; timeout de handshake: bajo ATN = dispositivo no presente (ST bit7);
+; en fase de datos = timeout de escritura (ST bit1).
+@tmout: lda KATNF
+        bmi @tmndp
+        lda KSTATUS
+        ora #$02        ; bit1: timeout de escritura
+        jmp @tmend
+@tmndp: lda KSTATUS
+        ora #$80        ; bit7: dispositivo no presente
+@tmend: sta KSTATUS
         cli
         sec
         rts
@@ -1590,17 +1655,16 @@ KISEND: sta KBSOUR2
         jsr KDATHI
         dec KBITCNT
         bne @bit
+        ldx #$00
         ldy #$00
 @fr:    lda SERPRT
         and #B_DATIN
         beq @ok
         iny
         bne @fr
-        lda #$80
-        sta KSTATUS
-        cli
-        sec
-        rts
+        inx
+        bne @fr
+        jmp @tmout      ; timeout de frame-ack
 @ok:    lsr KEOIF
         cli
         clc
@@ -1633,53 +1697,90 @@ KSDLY:  txa
 ; Dato valido con CLOCK alto. EOI -> bit6 de KSTATUS. C=1 si timeout.
 ; Estado de entrada (tras TKSA): oyente con DATA bajo, talker con CLOCK bajo.
 KACPTR: sei
-        jsr KDATHI          ; soltar DATA: listo para recibir
-        ; --- esperar CLOCK alto (talker listo) con timeout EOI (16 bits) ---
+        ; 1) Esperar CLOCK alto (talker suelta CLOCK = RTS). El talker lo
+        ;    mantiene alto hasta ver nuestro RFD, asi que es estable.
+        lda #$00
+        sta KSERHI
         ldx #$00
         ldy #$00
 @w1:    lda SERPRT
         and #B_CLKIN
-        bne @rdy            ; CLOCK alto -> el talker va a enviar
+        bne @rfd            ; CLOCK alto -> el talker esta listo
         iny
         bne @w1
         inx
         bne @w1
-        ; --- timeout: el talker retiene CLOCK = EOI (ultimo byte) ---
+        inc KSERHI
+        lda KSERHI
+        cmp #$40            ; ~58ms: el 1541 puede tardar en preparar el byte
+        bne @w1
+        jmp @to             ; dispositivo no presente
+@rfd:   jsr KDATHI          ; soltar DATA = RFD (listo para datos)
+        ; 2) Esperar CLOCK bajo (el talker baja CLOCK para empezar los bits).
+        ;    Si retiene CLOCK alto mas de ~256us -> EOI (ultimo byte).
+        ldx #$00
+        ldy #$00
+@w2:    lda SERPRT
+        and #B_CLKIN
+        beq @rdy            ; CLOCK bajo -> vienen bits
+        iny
+        bne @w2
+        inx
+        bne @w2
+        ; --- EOI: el talker retiene CLOCK = ultimo byte ---
         lda KSTATUS
         ora #$40
         sta KSTATUS         ; senalar EOI
-        jsr KDATLO          ; pulso de reconocimiento de EOI
+        jsr KDATLO          ; pulso de reconocimiento de EOI (~60us)
         ldx #$20
 @eod:   dex
         bne @eod
         jsr KDATHI
-@w1b:   lda SERPRT          ; ahora esperar CLOCK alto (ya sin EOI)
+        lda #$00
+        sta KSERHI
+        ldx #$00
+        ldy #$00
+@w2b:   lda SERPRT          ; ahora si, esperar CLOCK bajo (empiezan los bits)
         and #B_CLKIN
-        beq @w1b
+        beq @rdy
+        iny
+        bne @w2b
+        inx
+        bne @w2b
+        inc KSERHI
+        lda KSERHI
+        cmp #$40            ; ~58ms sin byte tras EOI = fin real (mas alla del ultimo)
+        bne @w2b
+        lda #$00            ; sin byte valido; KSTATUS ya tiene bit6 (EOI)
+        cli
+        sec
+        rts
 @rdy:   lda #$08
         sta KBITCNT
-@bit:   ldx #$00            ; esperar CLOCK alto (frontera de bit)
+        ; 3) Bucle de bits: esperar CLOCK alto, muestrear DATA (ventana valida),
+        ;    luego esperar CLOCK bajo (fin de bit). LSB primero.
+@bit:   ldx #$00
         ldy #$00
-@bhw:   lda SERPRT
-        asl                 ; N = CLOCK (bit6)
-        bmi @bl             ; CLOCK alto -> esperar el flanco de bajada
-        iny
-        bne @bhw
-        inx
-        bne @bhw
-        jmp @to
-@bl:    ldx #$00            ; esperar CLOCK bajo y muestrear DATA atomico
-        ldy #$00
-@bh:    lda SERPRT
+@bhi:   lda SERPRT
         asl                 ; C = DATA (bit7), N = CLOCK (bit6)
-        bpl @rd             ; CLOCK bajo -> C = DATA en el flanco de bajada
+        bmi @smp            ; CLOCK alto -> muestrear ahora (C = DATA)
         iny
-        bne @bh
+        bne @bhi
         inx
-        bne @bh
+        bne @bhi
         jmp @to
-@rd:    ror KBSOUR2         ; meter el bit DATA (LSB primero)
-        dec KBITCNT
+@smp:   ror KBSOUR2         ; meter el bit DATA (C ya = DATA), LSB primero
+        ldx #$00
+        ldy #$00
+@blo:   lda SERPRT
+        and #B_CLKIN
+        beq @nxt            ; CLOCK bajo -> fin de bit
+        iny
+        bne @blo
+        inx
+        bne @blo
+        jmp @to
+@nxt:   dec KBITCNT
         bne @bit
         jsr KDATLO          ; reconocer byte recibido (DATA bajo)
         lda KBSOUR2
@@ -1748,6 +1849,8 @@ KOPEN:  lda KLA
         lda KFA
         cmp #$04
         bcc @done
+        lda #$00
+        sta KSTATUS     ; estado limpio al iniciar la transaccion serie
         lda KFA
         jsr KLISTN
         lda KSA
@@ -1765,14 +1868,37 @@ KOPEN:  lda KLA
         iny
         bne @nm
 @nmend: jsr KUNLSN
+        lda KSTATUS
+        bpl @done       ; bit7 claro: dispositivo respondio
+        dec KLDTND      ; no presente: quitar la entrada de fichero recien anadida
+        lda #$05        ; error 5: DEVICE NOT PRESENT
+        sec
+        rts
 @done:  clc
         rts
 ; CLOSE ($FFC3): A = fichero logico a cerrar
-KCLOSE: jsr KFINDFL
+KCLOSE: pha             ; guardar num de fichero logico
+        jsr KFINDFL
         bcs @hay
+        pla
         clc             ; no abierto: nada que hacer
         rts
-@hay:   ; compactar las tablas desde X
+@hay:   ; X = indice. Si el dispositivo es serie, enviar CLOSE de canal.
+        lda KFAT,X
+        cmp #$04
+        bcc @noser
+        lda KSAT,X      ; leer secundaria ANTES (las rutinas serie destruyen X)
+        ora #$E0        ; comando CLOSE de canal
+        pha
+        lda KFAT,X
+        jsr KLISTN
+        pla
+        jsr KSECND
+        jsr KUNLSN
+@noser: pla             ; recuperar num de fichero logico
+        jsr KFINDFL     ; recomputar X (KLISTN/KSECND/KUNLSN destruyen X)
+        bcc @nada
+        ; compactar las tablas desde X
         ldy KLDTND
         dey
 @comp:  cpx KLDTND
@@ -1789,7 +1915,7 @@ KCLOSE: jsr KFINDFL
         cpx KLDTND
         bcc @comp
 @fin:   dec KLDTND
-        clc
+@nada:  clc
         rts
 ; CHKIN ($FFC6): X = fichero logico -> canal de entrada
 KCHKIN: txa
@@ -1802,10 +1928,12 @@ KCHKIN: txa
         sta KDFLTN      ; dispositivo de entrada = el del fichero
         cmp #$04
         bcc @done       ; no serie: listo
-        lda KFAT,X
-        jsr KTALK       ; A = dispositivo -> TALK (preserva X)
-        lda KSAT,X
+        lda KSAT,X      ; leer secundaria ANTES (KTALK->KISEND destruye X)
         ora #$60        ; secundaria de TALK
+        pha
+        lda KFAT,X
+        jsr KTALK       ; A = dispositivo -> TALK
+        pla
         jsr KTKSA
 @done:  clc
         rts
@@ -1820,9 +1948,12 @@ KCHKOUT: txa
         sta KDFLTO      ; dispositivo de salida = el del fichero
         cmp #$04
         bcc @done       ; no serie: listo
-        jsr KLISTN      ; A = dispositivo -> LISTEN (preserva X)
-        lda KSAT,X
-        ora #$60        ; secundaria de LISTEN
+        lda KSAT,X      ; leer secundaria ANTES (KLISTN->KISEND destruye X)
+        ora #$60        ; secundaria de LISTEN (canal de datos)
+        pha
+        lda KFAT,X
+        jsr KLISTN      ; A = dispositivo -> LISTEN
+        pla
         jsr KSECND
 @done:  clc
         rts
@@ -1853,14 +1984,14 @@ BOPEN:  lda #$01
         sta KFNLEN
         stx KFNADR
         sty KFNADR+1
-@go:    jsr KOPEN
+@go:    jsr $FFC0       ; OPEN via vector IOPEN (interceptable)
         bcs @err
         rts
 @err:   jmp KIOERR      ; A = codigo de error del kernal -> mensaje largo
 ; CLOSE lfn
 BCLOSE: jsr GETBYT      ; fichero logico -> X
         txa
-        jsr KCLOSE
+        jsr $FFC3       ; CLOSE via vector ICLOSE (interceptable)
         rts
 
 ; ------------------------------------------------------------
@@ -1894,17 +2025,293 @@ BPARSE: lda #$01
 @fin:   rts
 ; LOAD ["nombre"][,dispositivo][,secundaria]
 BLOAD:  jsr BPARSE
+        jsr KDIRMSG     ; mensajes de control segun modo directo/programa
         lda #$00        ; 0 = LOAD (1 seria VERIFY)
         sta KVERCK
-        ; (handshake pendiente) JSR KLOAD aqui, luego relink del BASIC
-        rts
+        ldx TXTTAB      ; destino por defecto (SA=0) = inicio del programa BASIC
+        ldy TXTTAB+1
+        jsr $FFD5       ; LOAD via vector ILOAD (interceptable)
+        bcc @lok
+        jmp KIOERR      ; error de E/S
+@lok:   ; si SA=0 (programa BASIC), fijar VARTAB=fin y reenlazar
+        lda KSA
+        bne @lret
+        stx VARTAB      ; X/Y = fin+1 devuelto por KLOAD
+        sty VARTAB+1
+        ; CLR de variables: igualar ARYTAB y STREND a VARTAB y liberar
+        ; cadenas (FRETOP=MEMSIZ). Sin esto quedan obsoletos (en el inicio
+        ; del programa tras NEW) y al crear la 1a variable se corrompe el
+        ; programa. No se toca la pila (a diferencia de CLEARC/STKINI).
+        stx ARYTAB
+        sty ARYTAB+1
+        stx STREND
+        sty STREND+1
+        lda MEMSIZ
+        sta FRETOP
+        lda MEMSIZ+1
+        sta FRETOP+1
+        jsr LNKPRG      ; reenlazar los punteros de linea del BASIC
+@lret:  rts
 ; SAVE ["nombre"][,dispositivo][,secundaria]
 BSAVE:  jsr BPARSE
-        ; (handshake pendiente) JSR KSAVE aqui
+        jsr KDIRMSG     ; mensajes de control segun modo directo/programa
+        lda TXTTAB      ; inicio del programa
+        sta KLDTMP
+        lda TXTTAB+1
+        sta KLDTMP+1
+        lda VARTAB      ; fin+1 del programa
+        tax
+        lda VARTAB+1
+        tay
+        lda #KLDTMP     ; A = indice ZP del puntero de inicio
+        jsr $FFD8       ; SAVE via vector ISAVE (interceptable)
+        bcc @sret
+        jmp KIOERR
+@sret:  rts
+; VERIFY ["nombre"][,dispositivo][,secundaria]: como LOAD pero compara.
+BVERIFY:jsr BPARSE
+        jsr KDIRMSG     ; mensajes de control segun modo directo/programa
+        lda #$01
+        sta KVERCK
+        ldx TXTTAB
+        ldy TXTTAB+1
+        jsr $FFD5       ; LOAD/VERIFY via vector ILOAD (interceptable)
+        bcc @vok
+        jmp KIOERR
+@vok:   lda KSTATUS
+        and #$10            ; bit4 = discrepancia
+        bne @verr
+        rts
+@verr:  jsr KCLRCHN
+        jsr CRDO
+        jsr OUTQST          ; "?"
+        lda #<KVMSG
+        ldy #>KVMSG
+        jsr STROUT
+        jmp TYPERR          ; " ERROR" + linea + READY
+KVMSG:  .byte "VERIFY",0
+
+; ------------------------------------------------------------
+; LOAD ($FFD5): A=0 carga / 1 verifica; X/Y = destino si SA=0.
+; Lee del dispositivo serie a memoria. Los 2 primeros bytes del fichero
+; son su direccion de carga: si SA=0 se relocaliza a X/Y, si SA<>0 se usa
+; la del fichero. Devuelve X/Y = fin+1; C=1 y A=codigo si error.
+; ------------------------------------------------------------
+KLOAD:  sta KVERCK
+        stx KLDPTR
+        sty KLDPTR+1
+        lda KFA
+        cmp #$04
+        bcs @ser
+        lda #$09            ; dispositivos no-serie aun no soportados
+        sec
+        rts
+@ser:   lda #$00
+        sta KSTATUS
+        jsr KSRCHMSG        ; "SEARCHING FOR <nombre>" si los mensajes ON
+        ; 1) enviar el nombre por el canal de OPEN (secundaria $F0|SA)
+        lda KFA
+        jsr KLISTN
+        lda #$F0            ; LOAD usa siempre el canal 0 (OPEN)
+        jsr KSECND
+        ldy #$00
+@nm:    cpy KFNLEN
+        beq @nmend
+        tya
+        pha
+        lda (KFNADR),Y
+        jsr KCIOUT
+        pla
+        tay
+        iny
+        bne @nm
+@nmend: jsr KUNLSN
+        jsr KLDGMSG         ; "LOADING" / "VERIFYING" si los mensajes ON
+        ; 2) TALK + TKSA ($60) para leer
+        lda KFA
+        jsr KTALK
+        lda #$60            ; canal 0
+        jsr KTKSA
+        lda KSTATUS
+        and #$80            ; ¿dispositivo no presente?
+        beq @addr
+        jsr KUNTLK
+        lda #$05            ; error 5: dispositivo no presente
+        sec
+        rts
+@addr:  ; leer la direccion de carga del fichero (2 bytes)
+        jsr KACPTR
+        sta KLDTMP
+        jsr KACPTR          ; A = byte alto
+        ldx KSA
+        beq @loop           ; SA=0 -> relocalizar a KLDPTR (X/Y de entrada)
+        sta KLDPTR+1        ; SA<>0 -> usar la direccion del fichero
+        lda KLDTMP
+        sta KLDPTR
+@loop:  lda KSTATUS
+        and #$40            ; EOI ya en la direccion (fichero vacio)
+        bne @eof
+@rd:    jsr KACPTR
+        ldy KVERCK
+        bne @vrf
+        ldy #$00
+        sta (KLDPTR),Y
+        jmp @next
+@vrf:   ldy #$00
+        cmp (KLDPTR),Y
+        beq @next
+        lda KSTATUS
+        ora #$10            ; bit4: error de verificacion
+        sta KSTATUS
+@next:  inc KLDPTR
+        bne @nc
+        inc KLDPTR+1
+@nc:    lda KSTATUS
+        and #$40            ; EOI -> el byte ya almacenado era el ultimo
+        beq @rd
+@eof:   jsr KUNTLK
+        ldx KLDPTR          ; devolver fin+1 en X/Y
+        ldy KLDPTR+1
+        clc
         rts
 
 ; ------------------------------------------------------------
-; KIOERR: imprime un mensaje de error de E/S largo (estilo Commodore)
+; SAVE ($FFD8): A = indice ZP del puntero de inicio; X/Y = fin+1.
+; Guarda memoria [inicio..fin) al dispositivo serie como fichero PRG.
+; ------------------------------------------------------------
+KSAVE:  stx KLDPTR          ; fin+1
+        sty KLDPTR+1
+        tax                 ; X = indice ZP del puntero de inicio
+        lda $00,X
+        sta KSAVPTR
+        lda $01,X
+        sta KSAVPTR+1
+        lda KFA
+        cmp #$04
+        bcs @ser
+        lda #$09
+        sec
+        rts
+@ser:   lda #$00
+        sta KSTATUS
+        jsr KSAVMSG         ; "SAVING <nombre>" si los mensajes ON
+        ; 1) enviar el nombre (canal OPEN, secundaria $F0|SA)
+        lda KFA
+        jsr KLISTN
+        lda #$F1            ; SAVE usa el canal 1 (OPEN)
+        jsr KSECND
+        ldy #$00
+@nm:    cpy KFNLEN
+        beq @nmend
+        tya
+        pha
+        lda (KFNADR),Y
+        jsr KCIOUT
+        pla
+        tay
+        iny
+        bne @nm
+@nmend: jsr KUNLSN
+        lda KSTATUS
+        and #$80            ; ¿dispositivo no presente?
+        beq @datch
+        lda #$05            ; error 5: DEVICE NOT PRESENT
+        sec
+        rts
+@datch: ; 2) abrir canal de datos: LISTEN + SECOND ($61)
+        lda KFA
+        jsr KLISTN
+        lda #$61            ; canal 1 (datos de SAVE)
+        jsr KSECND
+        ; enviar la direccion de inicio (2 bytes, lo/hi)
+        lda KSAVPTR
+        jsr KCIOUT
+        lda KSAVPTR+1
+        jsr KCIOUT
+        ; enviar bytes de datos [inicio..fin)
+@sv:    lda KSAVPTR
+        cmp KLDPTR
+        lda KSAVPTR+1
+        sbc KLDPTR+1
+        bcs @svend          ; KSAVPTR >= fin -> terminar
+        ldy #$00
+        lda (KSAVPTR),Y
+        jsr KCIOUT
+        inc KSAVPTR
+        bne @sv
+        inc KSAVPTR+1
+        jmp @sv
+@svend: jsr KUNLSN          ; flush del ultimo byte con EOI + UNLISTEN
+        ; cerrar el canal: LISTEN + SECOND ($E1) + UNLISTEN
+        lda KFA
+        jsr KLISTN
+        lda #$E1            ; CLOSE del canal 1
+        jsr KSECND
+        jsr KUNLSN
+        clc
+        rts
+
+; ------------------------------------------------------------
+; Mensajes de control de LOAD/SAVE (estilo Commodore). Solo se imprimen
+; si el bit7 de KMSGFL ($9D) esta activo (modo directo lo activa; un
+; programa lo limpia, asi un cargador carga en silencio). Nivel A/B:
+; texto observable reimplementado desde especificacion publica.
+; ------------------------------------------------------------
+KSRCHMSG:                   ; "SEARCHING FOR <nombre>" (o "SEARCHING")
+        bit KMSGFL
+        bpl @rts
+        lda KFNLEN
+        bne @named
+        lda #<MSRCH0
+        ldy #>MSRCH0
+        jmp STROUT
+@named: lda #<MSRCH
+        ldy #>MSRCH
+        jsr STROUT
+        jmp KPRNAM
+@rts:   rts
+KLDGMSG:                    ; "LOADING" / "VERIFYING"
+        bit KMSGFL
+        bpl @rts2
+        lda KVERCK
+        bne @ver
+        lda #<MLOAD
+        ldy #>MLOAD
+        jmp STROUT
+@ver:   lda #<MVERIF
+        ldy #>MVERIF
+        jmp STROUT
+@rts2:  rts
+KSAVMSG:                    ; "SAVING <nombre>"
+        bit KMSGFL
+        bpl @rts3
+        lda #<MSAVE
+        ldy #>MSAVE
+        jsr STROUT
+        jmp KPRNAM
+@rts3:  rts
+KPRNAM:                     ; imprime KFNLEN bytes del nombre desde KFNADR
+        ldy #$00
+@l:     cpy KFNLEN
+        beq @d
+        lda (KFNADR),Y
+        jsr KCHROUT
+        iny
+        bne @l
+@d:     rts
+MSRCH:  .byte $0D,"SEARCHING FOR ",0
+MSRCH0: .byte $0D,"SEARCHING",0
+MLOAD:  .byte $0D,"LOADING",0
+MVERIF: .byte $0D,"VERIFYING",0
+MSAVE:  .byte $0D,"SAVING ",0
+; fija KMSGFL segun el modo: bit7 si modo directo (CURLIN+1=$FF), si no 0.
+KDIRMSG:lda #$00
+        ldy CURLIN+1
+        iny                 ; $FF -> $00
+        bne @s              ; no es directo (programa) -> mensajes OFF
+        lda #$80            ; directo -> mensajes de control ON
+@s:     sta KMSGFL
+        rts
 ; y reengancha con la limpieza de error del BASIC. A = codigo (1-9).
 ; Los mensajes viven aqui, en el KERNAL, porque la ROM del BASIC esta
 ; llena. Texto en ingles descriptivo (interfaz observable, nivel A/B).
@@ -1987,23 +2394,23 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp KUNLSN      ; $FFAE UNLSN
         jmp KLISTN      ; $FFB1 LISTEN
         jmp KTALK       ; $FFB4 TALK
-        jmp KSTUB       ; $FFB7 READST
+        jmp KREADST     ; $FFB7 READST
         jmp KSETLFS     ; $FFBA SETLFS
         jmp KSETNAM     ; $FFBD SETNAM
-        jmp KOPEN       ; $FFC0 OPEN
-        jmp KCLOSE      ; $FFC3 CLOSE
-        jmp KCHKIN      ; $FFC6 CHKIN
-        jmp KCHKOUT     ; $FFC9 CHKOUT
-        jmp KCLRCHN     ; $FFCC CLRCHN
+        jmp ($031A)     ; $FFC0 OPEN   (IOPEN)
+        jmp ($031C)     ; $FFC3 CLOSE  (ICLOSE)
+        jmp ($031E)     ; $FFC6 CHKIN  (ICHKIN)
+        jmp ($0320)     ; $FFC9 CHKOUT (ICKOUT)
+        jmp ($0322)     ; $FFCC CLRCHN (ICLRCH)
         jmp ($0324)     ; $FFCF CHRIN  (IBASIN)
         jmp ($0326)     ; $FFD2 CHROUT (IBSOUT)
-        jmp KSTUB       ; $FFD5 LOAD
-        jmp KSTUB       ; $FFD8 SAVE
+        jmp ($0330)     ; $FFD5 LOAD   (ILOAD)
+        jmp ($0332)     ; $FFD8 SAVE   (ISAVE)
         jmp KSETTIM     ; $FFDB SETTIM
         jmp KRDTIM      ; $FFDE RDTIM
         jmp ($0328)     ; $FFE1 STOP  (ISTOP)
         jmp ($032A)     ; $FFE4 GETIN (IGETIN)
-        jmp KCLALL      ; $FFE7 CLALL
+        jmp ($032C)     ; $FFE7 CLALL  (ICLALL)
         jmp KUDTIM      ; $FFEA UDTIM
         jmp KSCREEN     ; $FFED SCREEN
         jmp KPLOT       ; $FFF0 PLOT

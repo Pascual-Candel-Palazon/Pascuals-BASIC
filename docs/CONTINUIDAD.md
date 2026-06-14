@@ -142,86 +142,108 @@ xvfb-run -a x64sc -default \
   codigos de control, graficos C= y SHIFT, cursor parpadeante, scroll.
 - Vectores RAM de pagina 3 (IRQ/BRK/NMI, E/S interceptable).
 - Autoarranque de cartuchos CBM80, API init de cartuchos.
+- **Bus IEC completo (verificado byte a byte contra el 1541 real en VICE):**
+  envio, recepcion (con EOI), OPEN/CLOSE/CHKIN/CHKOUT serie, READST,
+  LOAD/SAVE/VERIFY, `LOAD"$",8` (directorio) + LIST, y lectura del canal
+  de comandos/errores (15) por INPUT#. Round-trip de programa BASIC
+  (SAVE/NEW/LOAD/RUN) funciona. Variables reservadas `ST`/`TI`/`TI$`
+  operativas (ST lee KSTATUS $90; TI/TI$ leen el jiffy del KERNAL $A0).
 
 ### IEC: estado por fases
 - **Parsing del BASIC (fases 1, 2a, 3): COMPLETO y verificado.**
   OPEN/CLOSE/LOAD/SAVE se parsean y registran en tablas (KLAT/KFAT/KSAT).
   `translate.py` redirige los dispatch del BASIC: CQLOAD->BLOAD,
   CQSAVE->BSAVE, CQOPEN->BOPEN, CQCLOS->BCLOSE.
-- **Envio por el bus (fase 2b): FUNCIONA. (commit "IEC fase 2b ...")**
-  `OPEN15,8,15,"i0"` completa, vuelve a READY, y `PRINT ST` da **0**: la
-  unidad emulada responde y acepta cada byte (LISTEN, SECOND canal 15,
-  nombre, UNLISTEN). Primitivas: `KLISTN/KTALK/KSECND/KTKSA/KCIOUT/
-  KUNLSN/KUNTLK` + `KISEND` (envio de byte). Todas con **SEI/CLI** (el
-  timing serie no tolera interrupciones). `KCIOUT` hace envio DIFERIDO
-  para el EOI.
-- **Recepcion (WIP, NO funciona aun): `KACPTR` + integracion de entrada.**
-  Implementado y cableado: `CHKIN` envia TALK+TKSA, `CHKOUT` envia
-  LISTEN+SECOND, `CLRCHN` envia UNTALK/UNLISTEN, `CHRIN/GETIN` derivan a
-  `KACPTR` cuando el dispositivo es serie (rutina `KSERIN`).
-  **El handshake completa sin colgarse** (ST=0, sin timeout, el reloj
-  conmuta 8 veces por llamada), **pero ACPTR ensambla `$FF` o `$00` por
-  byte** (los 8 bits iguales), no la cadena de estado ASCII.
+- **Envio por el bus: FUNCIONA, VERIFICADO byte a byte.**
+  Primitivas `KLISTN/KTALK/KSECND/KTKSA/KCIOUT/KUNLSN/KUNTLK` + `KISEND`,
+  todas con SEI/CLI. `KCIOUT` hace envio DIFERIDO para el EOI. Verificado
+  escribiendo ficheros SEQ/PRG y releyendolos con `c1541 -extract` (los
+  bytes coinciden exactamente, sin byte extra; el EOI cae en el ultimo).
+- **Recepcion: FUNCIONA, VERIFICADA byte a byte con EOI.** `KACPTR` lee
+  bytes del talker; `CHKIN` envia TALK+TKSA, `CHRIN/GETIN` derivan a
+  `KACPTR` via `KSERIN`. Lectura de un SEQ conocido `ABCDEFGH` -> bytes
+  65..72 exactos, KSTATUS = 0 0 0 0 0 0 0 64 (EOI solo en el ultimo).
+- **READST ($FFB7): IMPLEMENTADO.** `KREADST = lda KSTATUS / rts`. La
+  variable `ST` del BASIC YA funciona (lee KSTATUS en $90 via CQSTAT, ver
+  seccion 9). `PEEK(144)` sigue siendo equivalente.
+- **LOAD ($FFD5) y SAVE ($FFD8): IMPLEMENTADOS y VERIFICADOS.**
+  - `LOAD"prog",8,1` (absoluto, SA=1): carga a la direccion del fichero,
+    fin+1 correcto en X/Y ($AE/$AF), bytes exactos en memoria.
+  - `SAVE"x",8`: crea PRG valido (direccion de carga + programa tokenizado).
+  - Round-trip BASIC: `SAVE -> NEW -> LOAD -> RUN` ejecuta el programa.
+  - `BLOAD` con SA=0 relocaliza a TXTTAB, fija VARTAB=fin y llama `LNKPRG`
+    ($A370, reenlace de lineas del BASIC). Ademas hace un CLR de punteros:
+    iguala ARYTAB=STREND=VARTAB y FRETOP=MEMSIZ (sin tocar la pila). Sin
+    esto, ARYTAB/STREND quedaban obsoletos (en el inicio del programa tras
+    NEW) y al crear la 1a variable tras LOAD (p.ej. `a=5`) se corrompia el
+    programa. Verificado: `load"rt",8 : a=5 : print a : list` da a=5 y el
+    programa intacto.
+  - **DEVICE NOT PRESENT**: OPEN/LOAD/SAVE a un dispositivo ausente dan
+    `?DEVICE NOT PRESENT ERROR` y paran (no se cuelgan). La deteccion esta
+    en `KISEND`: un timeout de handshake bajo ATN (KATNF bit7) pone ST bit7
+    ($80), en fase de datos pone ST bit1 ($02). El ack de ATN lo da
+    cualquier dispositivo del bus, asi que el caso real (dispositivo
+    direccionado ausente con otro presente) se detecta en el timeout del
+    frame-ack de la secundaria, no muestreando DATA tras el ATN.
+    KOPEN/KSAVE abortan con codigo 5 si ven ST bit7 tras direccionar (KLOAD
+    ya lo hacia tras KTKSA). Verificado contra dispositivo 9 ausente con el
+    8 presente; sin regresion en el 8.
 
-### LOAD/SAVE de bus: STUBS
-`$FFD5` (LOAD) y `$FFD8` (SAVE) del KERNAL siguen siendo `KSTUB`.
-`ACPTR` ($FFA5) ya NO es stub (ver arriba, WIP).
+### CLAVE del protocolo LOAD/SAVE (descubierto y verificado)
+El 1541 distingue LOAD de SAVE por el **numero de canal** de la secundaria,
+NO por la SA de SETLFS:
+- **LOAD usa siempre el canal 0**: OPEN con `$F0`, TALK/TKSA con `$60`.
+- **SAVE usa siempre el canal 1**: OPEN con `$F1`, datos `$61`, CLOSE `$E1`.
+La SA de SETLFS (el `,1` de `LOAD"x",8,1`) controla SOLO la relocalizacion
+del lado C64 (SA=0 relocaliza a X/Y; SA!=0 usa la direccion del fichero),
+NUNCA el canal IEC. Usar `$F0|SA`/`$60|SA` rompe el LOAD (manda canal 1).
+
+---
+
+## 6. Metodo de verificacion (caja negra contra 1541 real)
+
+La unica forma fiable de validar el bus es **VICE true-drive** con la ROM
+DOS del 1541 real como **periferico opaco** (equivale a probar contra
+hardware real). Reglas de sala limpia para esa ROM:
+- Vive FUERA del arbol del repo (`/home/claude/test_only/dos1541`), NUNCA
+  se mira/desensambla/distribuye, NUNCA la referencia `build.sh`.
+- Solo se comprueba su metadato (tamano/hash), nunca su contenido.
+
+Arnes de prueba (resumen; detalle en los transcripts):
+```
+c1541 -format ... test.d64 ; c1541 test.d64 -write host.bin "nombre,s"
+x64sc -kernal build/kernal_c64.bin -basic build/basic_c64.bin \
+  -chargen bin/chargen.bin -drive8type 1541 -drive8truedrive \
+  -dos1541 /home/claude/test_only/dos1541 -8 test.d64 \
+  -warp -limitcycles 2e8 -keybuf "<programa>" -exitscreenshot out.png
+c1541 test.d64 -extract  (verificar bytes con od -An -tx1)
+```
+Gotchas: GET#/GET en modo DIRECTO da "?ILLEGAL DIRECT ERROR" (usar
+programa numerado + RUN); crear PRG host con `python3 bytes()` (el printf
+de dash NO soporta `\xNN`); `PEEK(144)`=KSTATUS, `PEEK(174/175)`=$AE/$AF.
+py65 (arnes) NO modela el bus ($DD00 es RAM): solo VICE valida el bus.
+
+### Resumen de los bugs resueltos en el bus
+1. **Timeout RFD en re-direccionamiento (@wr de KISEND):** al re-abrir un
+   canal con fichero ya abierto, el 1541 tarda mas de ~0.9ms en soltar
+   DATA (RFD). Solucion: timeout extendido de 24 bits con `KSERHI` ($A7),
+   `cmp #$40` (~58ms).
+2. **KACPTR reescrito:** (a) orden correcto del handshake: esperar CLOCK
+   alto (RTS) ANTES de soltar DATA (RFD), no al reves; (b) muestrear DATA
+   con **CLOCK alto** (ventana valida), no en la bajada (carrera con la
+   liberacion de DATA por el talker). Timeout extendido en `@w2b` para no
+   colgarse al leer mas alla del EOF.
+3. **Canal LOAD/SAVE:** ver "CLAVE del protocolo" arriba.
+
+### Detalle de KISEND (emisor) y KACPTR (receptor)
+Emisor, por bit (LSB primero): fija DATA=bit, `KCLKHI` (reloj alto = bit
+valido), `KSDLY` (~55us), `KCLKLO`, `KDATHI`. El dato es valido con CLOCK
+alto. Receptor (espejo): espera CLOCK alto, suelta DATA (RFD), espera
+CLOCK bajo con timeout corto (EOI), y por bit espera CLOCK alto, muestrea
+DATA, espera CLOCK bajo; ack final con DATA bajo.
 
 ---
 
-## 6. ANALISIS del problema de recepcion (lo mas importante para seguir)
-
-Depuracion hecha con captura cruda de muestras en RAM libre (`$C000`,
-que el BASIC no toca; NO usar `$03C0+`, colisiona con el buffer interno
-de GET#/INPUT#).
-
-Hechos establecidos:
-1. La recepcion NO se cuelga: `OPEN15,8,15` + `GET#15,A$` -> ST=0,
-   `KACPTR` devuelve un byte, el reloj conmuta 8 veces (sin timeout).
-2. `KACPTR` devuelve `$FF` o `$00` por byte: dentro de cada byte, las 8
-   muestras de DATA salen iguales. No es la cadena de estado real.
-3. **Cambiar el flanco de muestreo (leer DATA con CLOCK alto vs CLOCK
-   bajo) NO altera el resultado.** Por tanto el problema NO es el flanco;
-   es la **sincronizacion/tramado del byte** o algo mas arriba.
-4. Se implemento lectura ATOMICA de CLOCK+DATA del mismo `lda $DD00` con
-   `asl` (bit7 DATA -> carry; bit6 CLOCK -> bit7/N), para eliminar la
-   carrera entre confirmar el reloj y leer el dato. No basto.
-5. Timeouts de 16 bits en todas las esperas de ACPTR (el 1541 emulado es
-   lento entre el "listo" y el primer bit; con timeout de 8 bits daba
-   falsos timeout -> falso EOI).
-
-### HIPOTESIS PRINCIPAL para la proxima sesion
-Quiza el **ENVIO tampoco transmite bits correctos**. `ST=0` en el envio
-solo significa "sin timeout del handshake", NO "el 1541 recibio los bits
-bien". Si el bit-timing falla en AMBOS sentidos, la unidad nunca recibio
-el comando, no hay estado real que leer, y `ACPTR` lee el bus en reposo
-(de ahi los `$FF`/`$00`).
-
-**Primer paso recomendado:** verificar que el ENVIO entrega bits
-correctos de verdad, con un comando de **efecto observable**:
-- p.ej. `OPEN15,8,15,"I0"` (Initialize) y luego comprobar el codigo de
-  estado, o un `N:nombre,id` (NEW/format) y ver si cambia el disco, o
-  escribir un fichero y releerlo con un emulador/herramienta externa
-  (`c1541 testdisk.d64 -dir` desde el host para inspeccionar el d64
-  despues de un SAVE).
-- Si el envio NO tiene efecto real, arreglar primero el bit-timing de
-  `KISEND` (setup del dato respecto al reloj, duracion de `KSDLY`), y
-  luego la recepcion deberia caer en su sitio.
-
-**Segundo paso:** revisar el estado tras el turnaround `KTKSA`
-(talker->oyente) y si hace falta un retardo de establecimiento del dato
-antes de muestrear; comprobar que la unidad realmente entra en modo
-talker.
-
-### Detalle de KISEND (emisor, referencia del protocolo)
-Tras ver al oyente listo (DATA alto), por cada bit (LSB primero):
-fija DATA=bit, `KCLKHI` (reloj alto = bit valido), `KSDLY` (retardo
-corto), `KCLKLO` (reloj bajo), `KDATHI` (libera DATA). Es decir, **el
-dato es valido mientras CLOCK esta alto**. La especificacion publica
-(Butterfield) para el RECEPTOR dice leer DATA cuando CLOCK baja; ambas
-convenciones se probaron en ACPTR sin diferencia (ver hecho 3).
-
----
 
 ## 7. Metodo de depuracion (probado, replicar)
 
@@ -241,6 +263,20 @@ convenciones se probaron en ACPTR sin diferencia (ver hecho 3).
   ($033C+), colisiona con la E/S del BASIC.
 - Leer `ST` (`PRINT ST`) tras una operacion de bus para ver
   timeout(=128)/EOI(=64)/ok(=0).
+- **ARTEFACTO de timing del `-exitscreenshot`** (me costo varias iteraciones):
+  el `-keybuf` inyecta ~1 char por jiffy, asi que el ultimo comando puede
+  no haber TERMINADO de renderizar cuando se dispara el screenshot. Sintoma
+  tipico: `LIST` "vacio" o salida ausente que en realidad SI funciona.
+  Solucion: poner SIEMPRE una linea marcadora despues del comando que
+  interesa (`... \n list \n print"fin-marcador" \n`); si aparece el
+  marcador, lo de arriba ya se renderizo. No concluir "roto" sin marcador.
+- **ZP del BASIC, NO la del C64 real**: `TXTTAB=$28`(40), `VARTAB=$2A`(42),
+  `ARYTAB=$2C`(44), `STREND=$2E`(46), `FRETOP=$30`(48), `MEMSIZ=$34`(52).
+  Para depurar con PEEK usar PEEK(40/41) y PEEK(42/43), NO PEEK(43)/PEEK(45)
+  (esas son las del C64 de Commodore y aqui dan basura).
+- **`INPUT#`/`GET#` solo en modo PROGRAMA**: en modo directo dan
+  `?ILLEGAL DIRECT`. Para probar el canal de comandos usar un programa
+  numerado + RUN, nunca una linea directa.
 
 ---
 
@@ -267,24 +303,73 @@ convenciones se probaron en ACPTR sin diferencia (ver hecho 3).
 
 ## 9. Roadmap restante (en orden)
 
-1. **Verificar el envio de verdad** (efecto observable) y, si hace falta,
-   corregir el bit-timing de `KISEND`. (Ver seccion 6.)
-2. **Recepcion `KACPTR`**: una vez confirmado el envio, clavar el
-   muestreo/tramado contra la unidad emulada.
-3. **LOAD/SAVE de bus** (`$FFD5`/`$FFD8`): secuencia completa.
-   - LOAD: LISTEN dispositivo, SECOND $F0 (open canal 0), nombre por
-     CIOUT, UNLISTEN, TALK dispositivo, TKSA $60, recibir por ACPTR
-     (primeros 2 bytes = direccion de carga, resto datos) hasta EOI,
-     UNTALK; luego relinkar el BASIC.
-   - SAVE: cabecera (direccion) + cuerpo por CIOUT.
-   - Verificar `LOAD"$",8` (directorio) y `LOAD"TEST",8` contra
-     `testdisk.d64`; SAVE de ida y vuelta.
-4. Post-1.0: chargen propio; recolector de basura de cadenas lineal
-   (desde descripcion algoritmica publica, NUNCA desensamblados);
-   ROM libre del 1541 (proyecto hermano).
+HECHO y VERIFICADO (esta sesion): envio, recepcion, READST, LOAD, SAVE,
+VERIFY, round-trip de programa BASIC, `LOAD"$",8` (directorio) + LIST, y
+lectura del canal de comandos/errores (15) por `INPUT#` (devuelve el
+"73,CBM DOS V2.6 1541,00,00" de power-up). VERIFY da "?VERIFY ERROR" en
+discrepancia (BVERIFY, con CQVERF redirigido en translate.py). Ver sec. 5/6.
+
+Pendiente:
+1. **LOAD/SAVE casos restantes**: nombres con comodines, semantica de LOAD
+   dentro de un programa en ejecucion (CBM re-RUN para SA=0; ahora continua
+   a la siguiente linea, que basta para cargadores SA=1).
+2. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
+   descripcion algoritmica publica, NUNCA desensamblados); ROM libre del
+   1541 (proyecto hermano).
+
+### Dispositivo no presente y CLR tras LOAD (HECHO, esta sesion)
+- OPEN/LOAD/SAVE a un dispositivo ausente dan `?DEVICE NOT PRESENT ERROR`
+  y paran (no se cuelgan). Deteccion en el timeout de handshake de `KISEND`
+  bajo ATN (ST bit7). KOPEN/KSAVE abortan con codigo 5; KLOAD ya lo hacia.
+  Ver detalle en la sec. 5.
+- `BLOAD` SA=0 ahora hace CLR de punteros (ARYTAB=STREND=VARTAB,
+  FRETOP=MEMSIZ) tras fijar VARTAB. Corrige un bug pre-existente: crear una
+  variable tras LOAD corrompia el programa. Ver detalle en la sec. 5.
+
+### Vectores RAM de pagina 3 (HECHO)
+Los vectores de E/S de pagina 3 (`$031A-$0333`: IOPEN/ICLOSE/ICHKIN/ICKOUT/
+ICLRCH/IBASIN/IBSOUT/ISTOP/IGETIN/ICLALL/USRCMD/ILOAD/ISAVE) apuntan a las
+rutinas reales en `KVECTAB` y se instalan en reset via `KRESTOR`. Las
+entradas `$FFxx` del KERNAL saltan INDIRECTO a traves de ellos (p.ej.
+`$FFC0 OPEN` = `jmp ($031A)`, `$FFD5 LOAD` = `jmp ($0330)`). Los manejadores
+del BASIC (BOPEN/BCLOSE/BLOAD/BSAVE/BVERIFY) llaman por los vectores
+(`jsr $FFC0`, `jsr $FFD5`, etc.), asi que la E/S del BASIC es interceptable
+(caso de uso: fast-loaders). USRCMD ($032E) queda como KSTUB (vector libre
+sin uso en C64). Verificado en VICE: enganchar ILOAD a una rutina propia
+intercepta el `LOAD` del BASIC y, encadenando al KLOAD real, la carga
+funciona (marca=1, dato cargado correcto). Test py65 `test_vectores.py`
+comprueba que quedan instalados y distintos (no re-stubeados).
+
+### Mensajes SEARCHING/LOADING/SAVING/VERIFYING (HECHO)
+LOAD imprime "SEARCHING FOR <nombre>" + "LOADING"; VERIFY "VERIFYING";
+SAVE "SAVING <nombre>". Solo en modo directo: `BLOAD/BSAVE/BVERIFY` llaman
+a `KDIRMSG`, que pone `KMSGFL` ($9D) bit7 si `CURLIN+1=$FF` (directo) y lo
+limpia en programa, asi un cargador `10 LOAD...` carga en silencio (igual
+que CBM). Las rutinas `KSRCHMSG/KLDGMSG/KSAVMSG` imprimen via STROUT/CHROUT
+gated en bit7. Verificado: directo muestra; programa silencioso y continua.
+
+### Variables reservadas ST/TI/TI$ (RESUELTO)
+El BASIC MS de MIT YA trae el manejo de ST/TI/TI$ en `ISVAR` (activo con
+los flags `EXTIO=1`/`TIME=1` de la config CBM). Solo leian direcciones que
+no coincidian con nuestro KERNAL. Arreglado en `translate.py` (config, sin
+tocar el upstream):
+- `ST`: el BASIC leia `CQSTAT`=$96; nuestro KERNAL guarda el estado en $90
+  (KSTATUS). Cambiado `CQSTAT` a 144 ($90). `get#...:if st=0` ya funciona.
+- `TI`/`TI$`: el reloj `CQTIMR` estaba en $8D (reloj propio del MS, que
+  nadie incrementaba). Apuntado a $A0 (`CQTIMR`=160), el reloj jiffy del
+  KERNAL que la IRQ incrementa a 60Hz (big-endian $A0=alto, igual que el
+  MS). `GETTIM` lee 5 bytes desde `CQTIMR-2`=$9E; `$9E/$9F` los limpia
+  RAMTAS y nadie los reescribe, asi la mantissa alta queda 0 y el valor =
+  jiffies. Verificado: `TI` avanza, `TI$` formatea HHMMSS, y `TI$="123456"`
+  fija el reloj (round-trip exacto, ti=2717760 jiffies).
 
 Pendiente general: consulta a abogado de PI antes de publicar. CTRL+letra
 sin asignar es deliberado.
+
+NOTA de test py65: `test_iec_fase1.py` "CLOSE compacta" ahora prueba la
+compactacion de tablas con dispositivos NO-serie (dev 0), porque CLOSE de
+un dispositivo serie hace E/S de bus que py65 no modela (el handshake
+necesita respuestas dinamicas). La compactacion serie se valida en VICE.
 
 ---
 
