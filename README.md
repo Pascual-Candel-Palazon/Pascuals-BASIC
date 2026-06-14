@@ -5,7 +5,8 @@ Drop-in replacement ROMs (BASIC + KERNAL) for the **stock** Commodore 64
 auditable provenance chain. The spirit is that of AltirraOS / Altirra
 BASIC in the Atari 8-bit world: a free alternative that boots, programs
 and behaves like the real machine.
-![Pascual's BASIC boot screen]<img width="703" height="538" alt="Image" src="https://github.com/user-attachments/assets/1f2fb7c6-2b83-4800-b334-ec5c08372bad" />
+
+<img width="703" height="538" alt="Image" src="https://github.com/user-attachments/assets/1f2fb7c6-2b83-4800-b334-ec5c08372bad" />
 ## Status
 
 Working and verified (functionally, in VICE, against a real 1541 used as
