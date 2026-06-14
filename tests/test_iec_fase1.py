@@ -57,10 +57,18 @@ def main():
     a, c = call(0xFFC6, x=7)
     ok &= caso("CHKIN fichero no abierto da error 3", c == 1 and a == 3)
 
-    # CLOSE compacta las tablas
-    call(0xFFC3, a=2)
-    ok &= caso("CLOSE compacta (LDTND=1, LAT[0]=5)",
-               mq.mem[0x98] == 1 and mq.mem[0x0259] == 5)
+    # Compactacion de tablas con dispositivos NO-serie (dev 0): aisla la
+    # logica de tablas del bus. El CLOSE de canal serie hace E/S por el bus
+    # y se valida con true-drive en VICE, no en py65 (que no modela el bus).
+    call(0xFFE7)                                   # reset de tablas (sin E/S de bus)
+    call(0xFFBD, a=0, x=0, y=0)                    # SETNAM vacio
+    call(0xFFBA, a=3, x=0, y=0); call(0xFFC0)      # file 3 dev0 -> slot 0
+    call(0xFFBA, a=4, x=0, y=0); call(0xFFC0)      # file 4 dev0 -> slot 1
+    call(0xFFBA, a=7, x=0, y=0); call(0xFFC0)      # file 7 dev0 -> slot 2
+    ok &= caso("tres OPEN no-serie (LDTND=3)", mq.mem[0x98] == 3)
+    call(0xFFC3, a=3)                              # CLOSE slot 0 -> desplaza 4,7
+    ok &= caso("CLOSE compacta (LDTND=2, LAT[0]=4, LAT[1]=7)",
+               mq.mem[0x98] == 2 and mq.mem[0x0259] == 4 and mq.mem[0x025A] == 7)
 
     # CLALL cierra todo
     call(0xFFE7)
