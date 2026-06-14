@@ -83,8 +83,10 @@ python3 test_editor.py
 - **KERNAL** (`$E200+`): written from scratch for this project, from the
   documented public interface and observable behavior. Strict policy in
   `docs/PROCEDENCIA.md`.
-- **CHARGEN**: temporarily the one from MEGA65 open-roms (third-party
-  license, see their project); pending replacement.
+- **CHARGEN** (`bin/chargen.bin`): the PXL font from MEGA65 Open ROMs
+  (created by Retrofan), included verbatim under **LGPL-3.0-or-later**.
+  This is the only non-MIT component; details and full license text in
+  `licenses/chargen/`. Temporary bridge, pending replacement by an own set.
 
 This project never downloads or disassembles the original ROMs. Any
 non-similarity verification against them should be performed by a third
@@ -94,4 +96,5 @@ party.
 
 - Own code (KERNAL, scripts, tests): MIT (`LICENSE`)
 - BASIC: Microsoft's MIT (`upstream/LICENSE-microsoft`)
-- `chargen.bin`: from MEGA65 open-roms, under that project's own license
+- `chargen.bin`: MEGA65 Open ROMs PXL font (Retrofan), **LGPL-3.0-or-later**
+  (see `licenses/chargen/`)
