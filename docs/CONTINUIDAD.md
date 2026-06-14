@@ -135,7 +135,18 @@ xvfb-run -a x64sc -default \
 ## 5. Estado funcional
 
 ### Funciona y verificado
-- Arranque limpio: `COMMODORE BASIC` / `38911 BYTES FREE` / `READY.`
+- Arranque limpio: `**** PASCUAL'S BASIC ****` (centrado, nombre propio en
+  vez de la marca de Commodore; sustituido en translate.py) / `38911 BYTES
+  FREE` / `READY.`
+- Mensajes de error LARGOS del BASIC (estilo C64): los 18 errores del MS se
+  imprimen completos (`?SYNTAX ERROR`, `?DIVISION BY ZERO ERROR`, `?NEXT
+  WITHOUT FOR ERROR IN nn`, etc.) en vez de los codigos de 2 letras del MS.
+  Mecanismo: el manejador del BASIC llama a `KERRMSG` (kernal.s), que indexa
+  una tabla de punteros `KERRTAB` con el mismo X (offset en ERRTAB) e imprime
+  via STROUT. Los textos viven en el KERNAL (la ROM del BASIC esta llena);
+  ERRTAB se conserva intacto (sus posiciones definen los indices ERRNF/...).
+  Sustitucion en translate.py. Verificado en VICE. Los 9 errores de E/S
+  (KIOERR) ya eran largos.
 - Interprete BASIC completo (MIT Microsoft): coma flotante, cadenas,
   FOR/GOSUB, RUN/LIST, PEEK/POKE, SYS/USR, etc.
 - Editor de pantalla WYSIWYG, teclado por IRQ (matriz/shift/repeticion),

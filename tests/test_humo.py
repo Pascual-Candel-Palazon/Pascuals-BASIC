@@ -17,7 +17,7 @@ def test_arranque():
             mq.irq()
         mq.mpu.step()
     txt = bytes(salida).decode("latin-1", "replace")
-    return caso("banner bajo IRQs", "COMMODORE BASIC" in txt) & \
+    return caso("banner bajo IRQs", "PASCUAL" in txt) & \
            caso("38911 BYTES FREE", "38911" in txt)
 
 def test_scroll():

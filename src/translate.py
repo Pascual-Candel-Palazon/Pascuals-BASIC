@@ -493,6 +493,19 @@ if C64:
 result = result.replace(
     '\tDT "### COMMODORE BASIC ###"',
     '\tDT "       **** PASCUAL\'S BASIC ****"')
+# [C64] Mensajes de error LARGOS: sustituir la impresion de los 2 chars
+# del codigo de error (NF/SN/...) por una llamada a KERRMSG (en kernal.s),
+# que imprime el texto completo desde una tabla de punteros indexada por el
+# mismo X (offset en ERRTAB). ERRTAB se conserva intacto (sus posiciones
+# definen los indices de error ERRNF/ERRSN/...). Comportamiento observable
+# del C64 (nivel B). Libera bytes en la ROM del BASIC (12 -> 3).
+result = result.replace(
+    "\tLDA\tERRTAB,X\t;GET FIRST CHR OF ERR MSG.\n"
+    "\tJSR\tOUTDO\t;OUTPUT IT.\n"
+    "\tLDA\tERRTAB+1,X\t;GET SECOND CHR.\n"
+    "\tJSR\tOUTDO\t;OUTPUT IT.\n",
+    "\tJSR\tKERRMSG\t;[C64] mensaje de error largo desde el KERNAL\n")
+
 open(OUT, "w").write(result)
 print(f"avisos: {len(warn)}")
 for w in warn[:10]:

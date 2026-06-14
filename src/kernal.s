@@ -2374,6 +2374,40 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jmp (POKER)     ; el RTS del usuario vuelve a NEWSTT
 
 ; ------------------------------------------------------------
+; KERRMSG (delta C64): imprime el mensaje LARGO de error del BASIC.
+; El BASIC entra con X = indice de byte en ERRTAB (0,2,4,... ,34),
+; que es el mismo indice valido para KERRTAB. Imprime via STROUT y
+; vuelve (el BASIC sigue en TYPERR con " ERROR" + numero de linea).
+; Los textos (interfaz observable, nivel B) viven aqui porque la ROM
+; del BASIC esta llena; el orden coincide con ERRTAB en basic_cbm.s.
+; ------------------------------------------------------------
+KERRMSG:lda KERRTAB,X
+        ldy KERRTAB+1,X
+        jmp STROUT      ; imprime el mensaje y RTS
+KERRTAB:
+        .word KERA00,KERA02,KERA04,KERA06,KERA08,KERA10,KERA12
+        .word KERA14,KERA16,KERA18,KERA20,KERA22,KERA24,KERA26
+        .word KERA28,KERA30,KERA32,KERA34
+KERA00: .byte "NEXT WITHOUT FOR",0
+KERA02: .byte "SYNTAX",0
+KERA04: .byte "RETURN WITHOUT GOSUB",0
+KERA06: .byte "OUT OF DATA",0
+KERA08: .byte "ILLEGAL QUANTITY",0
+KERA10: .byte "OVERFLOW",0
+KERA12: .byte "OUT OF MEMORY",0
+KERA14: .byte "UNDEF'D STATEMENT",0
+KERA16: .byte "BAD SUBSCRIPT",0
+KERA18: .byte "REDIM'D ARRAY",0
+KERA20: .byte "DIVISION BY ZERO",0
+KERA22: .byte "ILLEGAL DIRECT",0
+KERA24: .byte "TYPE MISMATCH",0
+KERA26: .byte "STRING TOO LONG",0
+KERA28: .byte "FILE DATA",0
+KERA30: .byte "FORMULA TOO COMPLEX",0
+KERA32: .byte "CAN'T CONTINUE",0
+KERA34: .byte "UNDEF'D FUNCTION",0
+
+; ------------------------------------------------------------
 ; Tabla de saltos estandar documentada
 ; ------------------------------------------------------------
 ; ------------------------------------------------------------
