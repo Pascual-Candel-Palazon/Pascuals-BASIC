@@ -211,6 +211,40 @@ La SA de SETLFS (el `,1` de `LOAD"x",8,1`) controla SOLO la relocalizacion
 del lado C64 (SA=0 relocaliza a X/Y; SA!=0 usa la direccion del fichero),
 NUNCA el canal IEC. Usar `$F0|SA`/`$60|SA` rompe el LOAD (manda canal 1).
 
+### LOAD de cinta (datasette, dispositivo 1): IMPLEMENTADO y VERIFICADO
+
+Decode clean-room del formato CBM de cinta, verificado end-to-end
+(`LOAD"",1` + `RUN` carga y ejecuta un programa, comprobado en py65 con un
+modelo del Timer B del CIA1 + interrupcion FLAG).
+
+- **Enganche**: en `KLOAD`, rama dispositivo<4: `lda KFA / cmp #$01 / beq ->
+  tape_load`; si no, error 9 como antes. El camino serie (>=4) intacto.
+- **`tape_load`** (en espacio libre del KERNAL, ~$F463): guarda CINV y lo
+  redirige a un manejador de cinta en CONVENCION CINV (no re-salva
+  registros; epilogo `pla/tay/pla/tax/pla/rti` como KIRQ); CIA1 timer B
+  continuo + deshabilita IRQ de timer A + habilita FLAG; motor on (`$01`
+  bit5=0); lee cabecera y datos; al terminar restaura timer A, CINV y motor.
+  Devuelve fin+1 en X/Y (clc) o error en A (sec), igual que el serie.
+- **Formato** (codificador<->decodificador autoconsistente): dipolos de
+  pulso (corto/medio/largo), marcador de byte (L,M), 8 bits LSB + paridad
+  impar, fin de bloque (L,S); bloque = leader + cuenta atras de sync
+  ($89..$81 copia1 / $09..$01 copia2) + datos + checksum XOR. Doble copia
+  con recuperacion a nivel de copia (flag store/discard).
+- **Memoria**: punteros en ZP libre ($A8-$AB); estado en el buffer de cinta
+  ($0340-$0361); `tsav` (CINV guardado) en $033C; cabecera leida en $0362.
+  CUIDADO con la colision que tuvo `tsav`: estaba en $0367 DENTRO del buffer
+  de cabecera, y los bytes del nombre lo machacaban -> CINV a basura ->
+  cuelgue tras cada load. Lo destapo la verificacion end-to-end. Movido a
+  $033C (libre, debajo del scratch).
+- **LIMITES** (refinables, sobre base que funciona): no VERIFY; no casa
+  nombre (carga el primer fichero); sin mensajes PRESS PLAY/FOUND/LOADING;
+  sin espera de PLAY (sense) ni vigilancia de STOP; recuperacion a nivel de
+  copia (no fusion byte a byte). SAVE de cinta no implementado.
+- **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync
+  son autoconsistentes (nuestro codificador<->decodificador). Para leer
+  cintas C64 REALES habria que clavar las longitudes/sync exactos del
+  estandar CBM (afinado posterior); el mecanismo esta probado.
+
 ---
 
 ## 6. Metodo de verificacion (caja negra contra 1541 real)

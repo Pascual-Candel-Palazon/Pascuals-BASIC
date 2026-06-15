@@ -2120,7 +2120,12 @@ KLOAD:  sta KVERCK
         lda KFA
         cmp #$04
         bcs @ser
-        lda #$09            ; dispositivos no-serie aun no soportados
+        lda KFA
+        cmp #$01
+        bne @notape
+        jmp tape_load       ; dispositivo 1 = cinta (devuelve clc/sec + X/Y o A)
+@notape:
+        lda #$09            ; otros dispositivos no-serie: no soportados
         sec
         rts
 @ser:   lda #$00
@@ -2406,6 +2411,457 @@ KERA28: .byte "FILE DATA",0
 KERA30: .byte "FORMULA TOO COMPLEX",0
 KERA32: .byte "CAN'T CONTINUE",0
 KERA34: .byte "UNDEF'D FUNCTION",0
+
+; ============================================================
+; CINTA (datasette): carga por dispositivo 1. Decode clean-room
+; verificado (timer B del CIA1 + FLAG). Manejador en CINV.
+; Variables: punteros en ZP libre; estado en el buffer de cinta.
+; ============================================================
+; --- punteros (direccionamiento indirecto): ZP libre del KERNAL ---
+dest=$A8
+dbase=$AA
+; --- estado en RAM absoluta (buffer de cinta $033C-$03FB) ---
+cur_lo=$0340
+cur_hi=$0341
+last_lo=$0342
+last_hi=$0343
+dlo=$0344
+dhi=$0345
+tcls=$0346
+phase=$0347
+p1=$0348
+state=$0349
+bitcnt=$034A
+curbyte=$034B
+parity=$034C
+bitval=$034D
+primed=$034E
+bstate=$034F
+syncn=$0350
+chk=$0351
+ncopy=$0352
+tstore=$0353
+blkstat=$0354
+dcnt=$0355
+maxst=$0357
+got=$0359
+phase_=$035A
+startlo=$035B
+starthi=$035C
+endlo=$035D
+endhi=$035E
+loaddn=$035F
+ftype=$0360
+bval=$0361
+tsav=$033C
+TSM=456
+TML=608
+
+; --- envoltorio: llamado desde KLOAD con dispositivo==1 ---
+; entra: KLDPTR=destino, KSA=relocalizar(0)/dir-fichero, KVERCK=verify
+; sale: clc + X/Y=fin+1 (exito) | sec + A=codigo (error)
+tape_load:
+        lda $0314
+        sta tsav
+        lda $0315
+        sta tsav+1
+        sei
+        lda #<HDLR
+        sta $0314
+        lda #>HDLR
+        sta $0315
+        lda $01
+        and #$DF            ; motor on (bit5=0)
+        sta $01
+        lda #$FF
+        sta $DC06
+        sta $DC07
+        lda #%00010001      ; timer B continuo + force load + start
+        sta $DC0F
+        lda #$01
+        sta $DC0D           ; deshabilitar IRQ timer A
+        lda #$90
+        sta $DC0D           ; habilitar FLAG
+        lda #$FF
+        sta last_lo
+        sta last_hi
+        lda #$00
+        sta primed
+        sta phase
+        sta state
+        sta bstate
+        sta syncn
+        sta blkstat
+        cli
+        ; leer CABECERA en $0362
+        lda #$62
+        sta dest
+        lda #$03
+        sta dest+1
+        lda #$C0
+        sta maxst
+        lda #$00
+        sta maxst+1
+        jsr read_block
+        bcc tl_err
+        lda $0363
+        sta startlo
+        lda $0364
+        sta starthi
+        lda $0365
+        sta endlo
+        lda $0366
+        sta endhi
+        ; destino: SA=0 -> KLDPTR ; SA<>0 -> direccion del fichero
+        lda KSA
+        bne tl_fileaddr
+        lda KLDPTR
+        sta dest
+        lda KLDPTR+1
+        sta dest+1
+        jmp tl_setlen
+tl_fileaddr:
+        lda startlo
+        sta dest
+        lda starthi
+        sta dest+1
+tl_setlen:
+        sec
+        lda endlo
+        sbc startlo
+        sta maxst
+        lda endhi
+        sbc starthi
+        sta maxst+1
+        lda dest            ; guardar base de carga para fin+1
+        sta startlo
+        lda dest+1
+        sta starthi
+        jsr read_block
+        bcc tl_err
+        clc
+        lda startlo
+        adc maxst
+        sta dlo
+        lda starthi
+        adc maxst+1
+        sta dhi
+        jsr tl_restore
+        ldx dlo
+        ldy dhi
+        clc
+        rts
+tl_err:
+        jsr tl_restore
+        lda #$04
+        sec
+        rts
+tl_restore:
+        sei
+        lda #$7F
+        sta $DC0D           ; limpiar habilitaciones CIA1
+        lda #$81
+        sta $DC0D           ; re-habilitar timer A (jiffy)
+        lda tsav
+        sta $0314
+        lda tsav+1
+        sta $0315
+        lda $01
+        ora #$20            ; motor off
+        sta $01
+        cli
+        rts
+
+read_block:
+        lda dest
+        sta dbase
+        lda dest+1
+        sta dbase+1
+        lda #$00
+        sta got
+        ; copia 1: almacenar
+        lda #$01
+        sta tstore
+        jsr do_copy
+        cmp #$01
+        bne rb1bad
+        lda #$01
+        sta got
+rb1bad:
+        ; copia 2
+        lda got
+        beq rb2store
+        lda #$00          ; ya hay copia buena: descartar copia2
+        sta tstore
+        jmp rb2go
+rb2store:
+        lda #$01
+        sta tstore
+rb2go:
+        jsr do_copy
+        cmp #$01
+        bne rb2bad
+        lda got
+        bne rbdone
+        lda #$01
+        sta got
+rb2bad:
+rbdone:
+        lda got
+        beq rbfail
+        sec
+        rts
+rbfail:
+        clc
+        rts
+
+; --- leer UNA copia a (dbase); espera a que termine; A=blkstat ---
+do_copy:
+        lda dbase
+        sta dest
+        lda dbase+1
+        sta dest+1
+        lda #$00
+        sta dcnt
+        sta dcnt+1
+        sta chk
+        sta blkstat
+        jsr resetblk
+dcwait:
+        lda blkstat
+        beq dcwait
+        lda blkstat
+        rts
+
+resetblk:
+        lda #$00
+        sta bstate
+        sta syncn
+        sta ncopy
+        rts
+
+; ===== pulso -> byte; manejador en convencion CINV (KIRQENT ya salvo A,X,Y) =====
+HDLR:
+        lda $DC0D
+rdtb:   lda $DC07
+        sta cur_hi
+        lda $DC06
+        sta cur_lo
+        lda $DC07
+        cmp cur_hi
+        bne rdtb
+        lda primed
+        bne haved
+        lda #$01
+        sta primed
+        jmp setlast
+haved:
+        lda last_lo
+        sec
+        sbc cur_lo
+        sta dlo
+        lda last_hi
+        sbc cur_hi
+        sta dhi
+        lda dlo
+        cmp #<TSM
+        lda dhi
+        sbc #>TSM
+        bcs ge_sm
+        lda #$00
+        sta tcls
+        jmp classified
+ge_sm:
+        lda dlo
+        cmp #<TML
+        lda dhi
+        sbc #>TML
+        bcs ge_ml
+        lda #$01
+        sta tcls
+        jmp classified
+ge_ml:
+        lda #$02
+        sta tcls
+classified:
+        lda tcls
+        cmp #$02
+        bne notlong
+        lda #$02
+        sta p1
+        lda #$01
+        sta phase
+        jmp setlast
+notlong:
+        lda phase
+        bne second
+        lda tcls
+        sta p1
+        lda #$01
+        sta phase
+        jmp setlast
+second:
+        lda #$00
+        sta phase
+        lda p1
+        cmp #$02
+        bne notLpair
+        lda tcls
+        cmp #$01
+        bne chk_LS
+        lda #$01
+        sta state
+        lda #$00
+        sta bitcnt
+        sta curbyte
+        sta parity
+        jmp setlast
+chk_LS:
+        lda tcls
+        cmp #$00
+        bne framerr
+        jsr blkend
+        jmp setlast
+notLpair:
+        lda state
+        beq setlast
+        lda p1
+        bne chk_ms
+        lda tcls
+        cmp #$01
+        bne framerr
+        lda #$00
+        jmp gotbit
+chk_ms:
+        lda tcls
+        cmp #$00
+        bne framerr
+        lda #$01
+gotbit:
+        sta bitval
+        lda bitcnt
+        cmp #$08
+        beq dopar
+        lda bitval
+        lsr a
+        ror curbyte
+        lda parity
+        eor bitval
+        sta parity
+        inc bitcnt
+        jmp setlast
+dopar:
+        lda parity
+        eor bitval
+        cmp #$01
+        beq okpar
+        lda #$00
+        sta state
+        jmp setlast
+okpar:
+        lda curbyte
+        jsr blkbyte
+        lda #$00
+        sta state
+        jmp setlast
+framerr:
+        lda #$00
+        sta state
+        sta phase
+setlast:
+        lda cur_lo
+        sta last_lo
+        lda cur_hi
+        sta last_hi
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+; ============ capa de bloque (byte -> bloque) ============
+blkbyte:
+        ldx bstate
+        bne bb_data
+        ldx syncn
+        bne bb_match
+        cmp #$89
+        bne bb_t09
+        ldx #$01
+        stx ncopy
+        ldx #$88
+        stx syncn
+        rts
+bb_t09:
+        cmp #$09
+        bne bb_ret
+        ldx #$02
+        stx ncopy
+        ldx #$08
+        stx syncn
+        rts
+bb_match:
+        cmp syncn
+        bne bb_syncbad
+        cmp #$81
+        beq bb_sdone
+        cmp #$01
+        beq bb_sdone
+        dec syncn
+        rts
+bb_sdone:
+        lda #$01
+        sta bstate
+        rts
+bb_syncbad:
+        lda #$00
+        sta syncn
+        rts
+bb_data:
+        sta bval
+        lda tstore
+        beq bb_nost
+        lda dcnt
+        cmp maxst
+        lda dcnt+1
+        sbc maxst+1
+        bcs bb_nost        ; dcnt >= maxst -> no escribir
+        lda bval
+        ldy #$00
+        sta (dest),y
+        inc dest
+        bne bb_d1
+        inc dest+1
+bb_d1:
+bb_nost:
+        lda bval
+        eor chk
+        sta chk
+        inc dcnt
+        bne bb_d2
+        inc dcnt+1
+bb_d2:
+bb_ret:
+        rts
+
+blkend:
+        lda bstate
+        beq be_ret
+        lda chk
+        bne be_bad
+        lda #$01
+        sta blkstat
+        jmp be_rst
+be_bad:
+        lda #$02
+        sta blkstat
+be_rst:
+        lda #$00
+        sta bstate
+        sta syncn
+be_ret:
+        rts
 
 ; ------------------------------------------------------------
 ; Tabla de saltos estandar documentada
