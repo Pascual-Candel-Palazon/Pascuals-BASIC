@@ -32,9 +32,11 @@ an opaque peripheral):
 - **Datasette (tape) LOAD** (clean-room CBM tape decode, verified end to
   end: `LOAD"",1` followed by `RUN` loads and runs a program from tape).
   Reads the CBM block format (sync countdown, per-byte parity, XOR
-  checksum, dual copy with copy-level recovery). Current limits: loads the
-  first file (no filename matching yet), no VERIFY, no PRESS PLAY/FOUND
-  messages, no STOP during load. Tape SAVE not yet implemented.
+  checksum, dual copy with copy-level recovery). Supports filename
+  matching (`LOAD"NAME",1` scans and skips non-matching files, CBM-style
+  prefix match; no name loads the first file) and the PRESS PLAY ON TAPE /
+  FOUND <name> / LOADING messages with a PLAY-sense wait. Current limits:
+  no VERIFY, no STOP during load. Tape SAVE not yet implemented.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -46,9 +48,8 @@ verification method, lessons learned, roadmap) lives in
 ## Roadmap
 
 - Own character generator (chargen) to replace the temporary borrowed one
-- Datasette (tape) SAVE, and tape LOAD refinements: filename matching,
-  VERIFY, PRESS PLAY / FOUND / LOADING messages, STOP-key abort during
-  load, and byte-level merge of the two block copies
+- Datasette (tape) SAVE, and tape LOAD refinements: VERIFY, STOP-key abort
+  during load, and byte-level merge of the two block copies
 - Linear string garbage collector: the BASIC inherits Microsoft's
   original quadratic GC (long pauses with thousands of strings). To be
   improved using the published algorithm (back-pointer technique),

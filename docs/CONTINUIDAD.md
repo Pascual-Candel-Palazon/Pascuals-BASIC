@@ -236,10 +236,21 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   de cabecera, y los bytes del nombre lo machacaban -> CINV a basura ->
   cuelgue tras cada load. Lo destapo la verificacion end-to-end. Movido a
   $033C (libre, debajo del scratch).
-- **LIMITES** (refinables, sobre base que funciona): no VERIFY; no casa
-  nombre (carga el primer fichero); sin mensajes PRESS PLAY/FOUND/LOADING;
-  sin espera de PLAY (sense) ni vigilancia de STOP; recuperacion a nivel de
-  copia (no fusion byte a byte). SAVE de cinta no implementado.
+- **HECHO (refinamiento)**: casa nombre (`LOAD"NAME",1` escanea y salta los
+  ficheros que no coinciden, prefijo estilo CBM; sin nombre carga el
+  primero); mensajes PRESS PLAY ON TAPE / FOUND <nombre> / LOADING con
+  espera del sense de PLAY ($01 bit4). Verificado end-to-end (LOAD+RUN) y
+  con cinta de 2 ficheros (`LOAD"DOS"` salta UNO y carga DOS). REQUISITO de
+  formato: el bloque de datos necesita un leader adecuado (las cintas CBM
+  reales lo tienen). Causa: el IRQ procesa bloques de forma autonoma; si
+  imprimir FOUND/LOADING tarda mas que el leader, la copia1 del bloque pasa
+  durante la impresion y la lectura se desalinea (do_copy captura la copia2
+  y luego espera una tercera inexistente -> cuelgue). Con leader largo el
+  decode se arma durante el leader y va bien. El codificador de pruebas usa
+  256 pulsos de leader en los bloques de datos.
+- **LIMITES** (refinables, sobre base que funciona): no VERIFY; sin
+  vigilancia de STOP durante la carga; recuperacion a nivel de copia (no
+  fusion byte a byte). SAVE de cinta no implementado.
 - **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync
   son autoconsistentes (nuestro codificador<->decodificador). Para leer
   cintas C64 REALES habria que clavar las longitudes/sync exactos del

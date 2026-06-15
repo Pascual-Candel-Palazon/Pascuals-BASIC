@@ -2465,6 +2465,20 @@ tape_load:
         sta tsav
         lda $0315
         sta tsav+1
+        ; --- PRESS PLAY ON TAPE + esperar a que se pulse PLAY (sense $01 bit4) ---
+        lda $01
+        and #$10
+        beq tl_playok       ; bit4=0 -> PLAY ya pulsado, no esperar
+        bit KMSGFL
+        bpl tl_waitp        ; mensajes off (cargador) -> esperar en silencio
+        lda #<MPLAY
+        ldy #>MPLAY
+        jsr STROUT
+tl_waitp:
+        lda $01
+        and #$10
+        bne tl_waitp        ; bit4=1 -> aun sin pulsar, esperar
+tl_playok:
         sei
         lda #<HDLR
         sta $0314
@@ -2493,6 +2507,7 @@ tape_load:
         sta syncn
         sta blkstat
         cli
+tl_nextfile:
         ; leer CABECERA en $0362
         lda #$62
         sta dest
@@ -2503,7 +2518,9 @@ tape_load:
         lda #$00
         sta maxst+1
         jsr read_block
-        bcc tl_err
+        bcs tl_hdrok
+        jmp tl_err
+tl_hdrok:
         lda $0363
         sta startlo
         lda $0364
@@ -2512,6 +2529,38 @@ tape_load:
         sta endlo
         lda $0366
         sta endhi
+        ; --- FOUND <nombre> (en cada cabecera, si mensajes ON) ---
+        bit KMSGFL
+        bpl tl_nofound
+        lda #<MFOUND
+        ldy #>MFOUND
+        jsr STROUT
+        jsr tl_prnam
+tl_nofound:
+        ; --- coincide el nombre pedido? (KFNLEN=0 -> cargar el primero) ---
+        lda KFNLEN
+        beq tl_match
+        ldy #$00
+tl_cmp:
+        cpy KFNLEN
+        beq tl_match        ; coincidieron todos los bytes pedidos (prefijo, como CBM)
+        lda (KFNADR),y
+        cmp $0367,y
+        bne tl_skip
+        iny
+        bne tl_cmp
+tl_skip:
+        ; no coincide: descartar su bloque de datos y leer la siguiente cabecera
+        jsr skip_block
+        jmp tl_nextfile
+tl_match:
+        ; --- LOADING (si mensajes ON) ---
+        bit KMSGFL
+        bpl tl_noload
+        lda #<MLOAD
+        ldy #>MLOAD
+        jsr STROUT
+tl_noload:
         ; destino: SA=0 -> KLDPTR ; SA<>0 -> direccion del fichero
         lda KSA
         bne tl_fileaddr
@@ -2570,6 +2619,32 @@ tl_restore:
         ora #$20            ; motor off
         sta $01
         cli
+        rts
+
+; imprime el nombre de 16 chars de la cabecera ($0367) via KCHROUT
+tl_prnam:
+        ldy #$00
+tl_pn:  lda $0367,y
+        jsr KCHROUT
+        iny
+        cpy #$10
+        bne tl_pn
+        rts
+MPLAY:  .byte $0D,"PRESS PLAY ON TAPE",0
+MFOUND: .byte $0D,"FOUND ",0
+
+; descarta un bloque completo (ambas copias) sin escribir memoria: tstore=0
+skip_block:
+        lda #$62
+        sta dbase
+        lda #$03
+        sta dbase+1
+        lda #$00
+        sta tstore
+        jsr do_copy         ; copia 1: descartar
+        lda #$00
+        sta tstore
+        jsr do_copy         ; copia 2: descartar
         rts
 
 read_block:
