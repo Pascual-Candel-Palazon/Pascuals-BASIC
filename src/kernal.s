@@ -2457,6 +2457,10 @@ tsav=$033C
 tstop=$033E         ; bandera de abort por RUN/STOP durante la carga
 dcstopc=$033F       ; contador para throttle del sondeo de STOP
 tverify=$0377       ; VERIFY real guardado (la cabecera se almacena siempre)
+bderr=$0378         ; el byte actual tuvo error de paridad (1) o no (0)
+expchk=$0379        ; checksum esperado del bloque (de una copia con paridad buena)
+expchkok=$037A      ; expchk capturado (1) o no (0)
+mcnt=$037B          ; contador scratch para el re-XOR del bloque fusionado (lo/hi)
 TSM=456
 TML=608
 
@@ -2672,6 +2676,7 @@ read_block:
         sta dbase+1
         lda #$00
         sta got
+        sta expchkok        ; reset de la captura del checksum esperado
         ; copia 1: almacenar
         lda #$01
         sta tstore
@@ -2683,24 +2688,34 @@ read_block:
 rb1bad:
         lda tstop
         bne rbdone          ; STOP durante copia1: no leer copia2 (evita colgarse)
-        ; copia 2
         lda got
-        beq rb2store
-        lda #$00          ; ya hay copia buena: descartar copia2
+        bne rb1ok           ; copia1 buena -> descartar copia2
+        ; copia1 mala
+        lda KVERCK
+        bne rb2vrf          ; VERIFY: copia2 compara (sin merge), comportamiento actual
+        ; LOAD con copia1 mala: leer copia2 en MODO MERGE (sobrescribir bytes buenos)
+        lda #$02
         sta tstore
-        jmp rb2go
-rb2store:
+        jsr do_copy
+        lda tstop
+        bne rbdone          ; STOP durante copia2
+        jsr chk_merged      ; got=1 si el checksum del bloque fusionado cuadra
+        jmp rbdone
+rb1ok:
+        ; copia1 buena: descartar copia2
+        lda #$00
+        sta tstore
+        jsr do_copy
+        jmp rbdone
+rb2vrf:
+        ; VERIFY copia1 mala: copia2 compara (tstore=1 + KVERCK=1 -> bb_vrf)
         lda #$01
         sta tstore
-rb2go:
         jsr do_copy
         cmp #$01
-        bne rb2bad
-        lda got
         bne rbdone
         lda #$01
         sta got
-rb2bad:
 rbdone:
         lda got
         beq rbfail
@@ -2708,6 +2723,48 @@ rbdone:
         rts
 rbfail:
         clc
+        rts
+
+; --- verificar el bloque fusionado: XOR de memory[dbase..dbase+maxst-1]
+;     contra el checksum esperado. got=1 si cuadra. ---
+chk_merged:
+        lda expchkok
+        beq cm_done         ; sin checksum capturado -> no verificable -> got queda 0
+        lda dbase
+        sta dest            ; reusar dest (pagina cero) como puntero; la copia ya termino
+        lda dbase+1
+        sta dest+1
+        lda maxst
+        sta mcnt
+        lda maxst+1
+        sta mcnt+1
+        lda #$00
+        sta chk             ; reusar chk como acumulador (ya no se usa tras las copias)
+cm_loop:
+        lda mcnt
+        ora mcnt+1
+        beq cm_check        ; mcnt==0 -> fin
+        ldy #$00
+        lda (dest),y
+        eor chk
+        sta chk
+        inc dest
+        bne cm_dec
+        inc dest+1
+cm_dec:
+        lda mcnt
+        bne cm_declo
+        dec mcnt+1
+cm_declo:
+        dec mcnt
+        jmp cm_loop
+cm_check:
+        lda chk
+        cmp expchk
+        bne cm_done
+        lda #$01
+        sta got             ; XOR del bloque fusionado == checksum -> recuperado
+cm_done:
         rts
 
 ; --- leer UNA copia a (dbase); espera a que termine; A=blkstat ---
@@ -2861,10 +2918,20 @@ dopar:
         eor bitval
         cmp #$01
         beq okpar
+        ; paridad MALA
+        lda bstate
+        beq parbaddrop      ; en sync: descartar (no romper el sync)
+        lda #$01
+        sta bderr           ; en datos: marcar error y pasar el byte (mantener alineacion)
+        lda curbyte
+        jsr blkbyte
+parbaddrop:
         lda #$00
         sta state
         jmp setlast
 okpar:
+        lda #$00
+        sta bderr           ; byte con paridad buena
         lda curbyte
         jsr blkbyte
         lda #$00
@@ -2901,7 +2968,9 @@ blkbyte:
         rts
 bb_t09:
         cmp #$09
-        bne bb_ret
+        beq bb_t09y
+        rts                ; no es $09 -> volver (bb_ret esta lejos)
+bb_t09y:
         ldx #$02
         stx ncopy
         ldx #$08
@@ -2932,12 +3001,22 @@ bb_data:
         cmp maxst
         lda dcnt+1
         sbc maxst+1
-        bcs bb_nost        ; dcnt >= maxst -> no escribir/comparar
+        bcs bb_nost        ; dcnt >= maxst (checksum/relleno) -> bb_nost
+        lda tstore
+        cmp #$02
+        beq bb_merge       ; merge (LOAD copia2)
         lda KVERCK
         bne bb_vrf         ; verify: comparar en vez de almacenar
         lda bval
         ldy #$00
         sta (dest),y
+        jmp bb_dinc
+bb_merge:
+        lda bderr
+        bne bb_dinc        ; copia2 con error -> conservar el byte de copia1
+        lda bval
+        ldy #$00
+        sta (dest),y       ; copia2 buena -> sobrescribir copia1
         jmp bb_dinc
 bb_vrf:
         ldy #$00
@@ -2953,6 +3032,21 @@ bb_dinc:
         inc dest+1
 bb_d1:
 bb_nost:
+        lda expchkok
+        bne bb_noexp
+        lda dcnt
+        cmp maxst
+        bne bb_noexp
+        lda dcnt+1
+        cmp maxst+1
+        bne bb_noexp       ; no es el byte de checksum del bloque
+        lda bderr
+        bne bb_noexp       ; checksum con error de paridad -> no capturar
+        lda bval
+        sta expchk         ; checksum esperado (de una copia con paridad buena)
+        lda #$01
+        sta expchkok
+bb_noexp:
         lda bval
         eor chk
         sta chk

@@ -32,7 +32,8 @@ an opaque peripheral):
 - **Datasette (tape) LOAD** (clean-room CBM tape decode, verified end to
   end: `LOAD"",1` followed by `RUN` loads and runs a program from tape).
   Reads the CBM block format (sync countdown, per-byte parity, XOR
-  checksum, dual copy with copy-level recovery). Supports filename
+  checksum, dual copy with byte-level merge that recovers a block even
+  when each copy has read errors in different bytes). Supports filename
   matching (`LOAD"NAME",1` scans and skips non-matching files, CBM-style
   prefix match; no name loads the first file), the PRESS PLAY ON TAPE /
   FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
@@ -50,8 +51,7 @@ verification method, lessons learned, roadmap) lives in
 ## Roadmap
 
 - Own character generator (chargen) to replace the temporary borrowed one
-- Datasette (tape) SAVE, and byte-level merge of the two block copies on
-  tape LOAD
+- Datasette (tape) SAVE
 - Linear string garbage collector: the BASIC inherits Microsoft's
   original quadratic GC (long pauses with thousands of strings). To be
   improved using the published algorithm (back-pointer technique),

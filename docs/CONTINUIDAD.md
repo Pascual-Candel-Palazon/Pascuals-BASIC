@@ -229,7 +229,12 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   pulso (corto/medio/largo), marcador de byte (L,M), 8 bits LSB + paridad
   impar, fin de bloque (L,S); bloque = leader + cuenta atras de sync
   ($89..$81 copia1 / $09..$01 copia2) + datos + checksum XOR. Doble copia
-  con recuperacion a nivel de copia (flag store/discard).
+  con fusion byte a byte: copia1 se almacena (los bytes con error de paridad
+  se pasan con flag bderr para no desalinear); si copia1 falla el checksum,
+  copia2 se lee en modo merge y sobrescribe solo los bytes que trae con
+  paridad buena; el bloque fusionado se valida re-XOR contra el checksum
+  esperado (chk_merged). Recupera un bloque aunque cada copia tenga errores
+  en bytes distintos; falla solo si el MISMO byte esta mal en ambas.
 - **Memoria**: punteros en ZP libre ($A8-$AB); estado en el buffer de cinta
   ($0340-$0361); `tsav` (CINV guardado) en $033C; cabecera leida en $0362.
   CUIDADO con la colision que tuvo `tsav`: estaba en $0367 DENTRO del buffer
@@ -275,9 +280,14 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   KLDGMSG segun KVERCK. Verificado KERNAL-level (match: ST=$00, sin escribir
   memoria; mismatch: ST=$10) y end-to-end via BASIC (mismatch -> "?VERIFY
   ERROR"; match -> READY sin error).
-- **LIMITES** (refinables, sobre base que funciona):
-  recuperacion a nivel de copia (no fusion byte a byte). SAVE de cinta no
-  implementado.
+- **HECHO (refinamiento)**: fusion byte a byte de las dos copias en LOAD
+  (ver descripcion del decode arriba). Verificado con inyeccion de errores
+  (test_merge_chars: copy1[i]+copy2[j] con i!=j se recupera; mismo byte malo
+  en ambas falla; varios errores por copia en posiciones distintas se
+  recuperan). Sin regresion en VERIFY, STOP ni matching.
+- **LIMITES** (refinables, sobre base que funciona): SAVE de cinta no
+  implementado. VERIFY usa recuperacion a nivel de copia (no aplica la
+  fusion byte a byte; es una comprobacion, no una carga).
 - **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync
   son autoconsistentes (nuestro codificador<->decodificador). Para leer
   cintas C64 REALES habria que clavar las longitudes/sync exactos del
