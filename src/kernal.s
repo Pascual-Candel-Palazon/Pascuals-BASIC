@@ -2466,6 +2466,25 @@ TSM_v=$037F         ; umbral corto/medio calculado (lo/hi)
 TML_v=$0381         ; umbral medio/largo calculado (lo/hi)
 calibr=$0383        ; 1 = midiendo el leader (calibrando velocidad), 0 = congelado
 qd=$0384            ; temporal para los calculos de umbral (lo/hi)
+; --- variables de ESCRITURA de cinta (SAVE) ---
+wst=$0386           ; fase de escritura: 0=leader 1=bytes 2=fin 3=hecho
+wnext=$0387         ; siguiente pulso precomputado (lo/hi)
+wlcnt=$0389         ; pulsos de leader restantes (lo/hi)
+whalf=$038B         ; mitad del dipolo/marcador (0 o 1)
+wdone=$038C         ; ultimo pulso emitido (1) -> falta el flanco de cierre
+wfin=$038D          ; escritura terminada del todo (1)
+wsym=$038E          ; simbolo dentro del byte: 0=marcador 1..8=bits 9=paridad
+wcur=$038F          ; byte actual en escritura
+wpar=$0390          ; paridad del byte actual (impar)
+wbph=$0391          ; fase del flujo de bytes: 0=countdown 1=datos 2=checksum
+wcdcnt=$0392        ; contador de countdown (9..1)
+wcmask=$0393        ; mascara de copia para el countdown ($80 copia1, $00 copia2)
+wptr=$C1            ; puntero de datos en pagina cero (=KSAVPTR), para (wptr),y
+wend=$0396          ; fin+1 de datos (lo/hi)
+wchk=$0398          ; checksum acumulado (XOR de datos)
+wcopy=$0399         ; numero de copia (1 o 2)
+wleader2=$039A      ; pulsos de leader de la copia 2 (lo/hi)
+wsptr=$039C         ; puntero de inicio de datos guardado, para resetear en copia 2 (lo/hi)
 TSM=456
 TML=608
 
@@ -3200,6 +3219,288 @@ be_rst:
 be_ret:
         rts
 
+; ============ ESCRITURA DE CINTA (SAVE) ============
+; Genera la secuencia de pulsos del formato CBM por IRQ de Timer B (one-shot).
+; En cada underflow togglea $01 bit3 (un flanco = un pulso, un semiciclo).
+; wnext se precomputa para que el overhead de la IRQ (underflow->recarga TB)
+; sea constante; el avance del estado se hace despues de arrancar el timer.
+; (version inicial: leader + marcador de fin; el encode de bytes va aparte)
+WS = 384                ; pulso corto (ciclos de Timer B)
+WM = 528                ; pulso medio
+WL = 688                ; pulso largo
+
+tape_wblock:
+        ; el llamador deja wptr=inicio, wend=fin+1, wlcnt=leader1, wleader2=leader2
+        lda $0314
+        sta tsav            ; guardar CINV
+        lda $0315
+        sta tsav+1
+        lda #$00
+        sta wst             ; fase 0 = leader
+        sta whalf
+        sta wdone
+        sta wfin
+        lda #$01
+        sta wcopy           ; empezar por la copia 1
+        lda wptr
+        sta wsptr
+        lda wptr+1
+        sta wsptr+1         ; guardar inicio para resetear en copia 2
+        sei
+        lda #<whandler
+        sta $0314
+        lda #>whandler
+        sta $0315
+        lda #$82
+        sta $DC0D           ; habilitar IRQ de Timer B
+        jsr wgen            ; wnext = pulso 0
+        lda wnext
+        sta $DC06
+        lda wnext+1
+        sta $DC07
+        lda $01
+        eor #$08
+        sta $01             ; flanco 0
+        lda #$19
+        sta $DC0F           ; force load + start + one-shot
+        jsr wgen            ; precomputar pulso 1
+        cli
+ws_wait:
+        lda wfin
+        beq ws_wait
+        lda #$02
+        sta $DC0D           ; deshabilitar IRQ de Timer B
+        lda tsav
+        sta $0314           ; restaurar CINV
+        lda tsav+1
+        sta $0315
+        rts
+
+; manejador de escritura (CINV; KIRQENT ya apilo A/X/Y)
+whandler:
+        lda wfin
+        bne wh_ack
+        lda wdone
+        bne wh_last
+        lda wnext
+        sta $DC06
+        lda wnext+1
+        sta $DC07
+        lda $01
+        eor #$08
+        sta $01             ; flanco
+        lda #$19
+        sta $DC0F           ; recargar + arrancar (overhead constante hasta aqui)
+        lda $DC0D           ; ack ICR (HW real)
+        jsr wgen            ; precomputar el siguiente pulso (timer ya corriendo)
+        jmp wh_rti
+wh_last:
+        lda $01
+        eor #$08
+        sta $01             ; flanco final: cierra el ultimo pulso
+        lda #$01
+        sta wfin
+        lda $DC0D
+        jmp wh_rti
+wh_ack:
+        lda $DC0D
+wh_rti:
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+; generador: wnext = pulso del estado actual; avanza el estado
+wgen:
+        lda wst
+        cmp #$03
+        bne wg_n3
+        lda #$01
+        sta wdone           ; wst==3 -> bloque hecho (inline)
+        rts
+wg_n3:
+        cmp #$00
+        beq wg_leader
+        cmp #$02
+        beq wg_end
+        ; wst==1 (flujo de bytes):
+        jsr wbytepulse
+        jsr wbyteadv
+        rts
+wg_end:
+        lda whalf
+        bne wg_end1
+        lda #<WL            ; marcador de fin: mitad 0 -> L
+        sta wnext
+        lda #>WL
+        sta wnext+1
+        lda #$01
+        sta whalf
+        rts
+wg_end1:
+        lda #<WS            ; marcador de fin: mitad 1 -> S
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        ; copia terminada: si era la copia 1, encadenar la copia 2
+        lda wcopy
+        cmp #$01
+        bne wg_alldone
+        lda #$02
+        sta wcopy           ; pasar a copia 2
+        lda wsptr
+        sta wptr
+        lda wsptr+1
+        sta wptr+1          ; resetear puntero de datos al inicio
+        lda wleader2
+        sta wlcnt
+        lda wleader2+1
+        sta wlcnt+1         ; leader de la copia 2
+        lda #$00
+        sta wst             ; volver a fase leader (continuo, sin hueco)
+        sta whalf
+        rts
+wg_alldone:
+        lda #$03
+        sta wst             ; tras este pulso, bloque hecho
+        rts
+wg_leader:
+        lda #<WS
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        lda wlcnt
+        bne wg_l1
+        dec wlcnt+1
+wg_l1:
+        dec wlcnt
+        lda wlcnt
+        ora wlcnt+1
+        bne wg_lret
+        lda #$01
+        sta wst             ; leader hecho -> fase de bytes
+        jsr wstartbytes
+wg_lret:
+        rts
+
+; iniciar el flujo de bytes (al terminar el leader). El llamador deja
+; wptr=inicio, wend=fin+1, wcopy=numero de copia.
+wstartbytes:
+        lda #$00
+        sta wbph            ; fase 0 = countdown
+        sta wchk            ; checksum = 0
+        lda wcopy
+        cmp #$01
+        bne wsb_c2
+        lda #$80            ; copia 1: countdown $89..$81
+        sta wcmask
+        jmp wsb_c3
+wsb_c2:
+        lda #$00            ; copia 2: countdown $09..$01
+        sta wcmask
+wsb_c3:
+        lda #$09
+        sta wcdcnt
+        ora wcmask
+        sta wcur            ; primer byte de countdown = 9 | mascara
+        jsr wcalcpar
+        lda #$00
+        sta wsym
+        sta whalf
+        rts
+
+; wnext = pulso del simbolo actual (wsym, whalf) del byte wcur (paridad wpar)
+wbytepulse:
+        lda wsym
+        bne wbp_notmark
+        lda whalf           ; wsym==0: marcador [L,M]
+        bne wbp_m1
+        lda #<WL
+        sta wnext
+        lda #>WL
+        sta wnext+1
+        rts
+wbp_m1:
+        lda #<WM
+        sta wnext
+        lda #>WM
+        sta wnext+1
+        rts
+wbp_notmark:
+        cmp #$09
+        beq wbp_par
+        ldx wsym            ; wsym 1..8: bit (wsym-1) de wcur
+        dex
+        lda wcur
+wbp_sh:
+        dex
+        bmi wbp_shd
+        lsr a
+        jmp wbp_sh
+wbp_shd:
+        and #$01
+        beq wbp_b0
+        lda whalf           ; bit==1: dipolo(1)=[M,S]
+        bne wbp_b1h1
+        lda #<WM
+        sta wnext
+        lda #>WM
+        sta wnext+1
+        rts
+wbp_b1h1:
+        lda #<WS
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        rts
+wbp_b0:
+        lda whalf           ; bit==0: dipolo(0)=[S,M]
+        bne wbp_b0h1
+        lda #<WS
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        rts
+wbp_b0h1:
+        lda #<WM
+        sta wnext
+        lda #>WM
+        sta wnext+1
+        rts
+wbp_par:
+        lda wpar            ; wsym==9: dipolo(wpar)
+        beq wbp_p0
+        lda whalf           ; par==1: [M,S]
+        bne wbp_p1h1
+        lda #<WM
+        sta wnext
+        lda #>WM
+        sta wnext+1
+        rts
+wbp_p1h1:
+        lda #<WS
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        rts
+wbp_p0:
+        lda whalf           ; par==0: [S,M]
+        bne wbp_p0h1
+        lda #<WS
+        sta wnext
+        lda #>WS
+        sta wnext+1
+        rts
+wbp_p0h1:
+        lda #<WM
+        sta wnext
+        lda #>WM
+        sta wnext+1
+        rts
+
+
 ; ------------------------------------------------------------
 ; Tabla de saltos estandar documentada
 ; ------------------------------------------------------------
@@ -3215,6 +3516,101 @@ be_ret:
         jmp KRAMTAS     ; RAMTAS interno
 .org $FDA3
         jmp KIOINIT     ; IOINIT interno
+
+; --- continuacion de ESCRITURA de cinta (wbyteadv/wcalcpar)
+;     reubicada aqui (hueco $FDA6-$FF5A) por falta de espacio antes de $FD15
+; avanzar el estado tras emitir un pulso del flujo de bytes
+wbyteadv:
+        lda whalf
+        bne wba_h1
+        lda #$01            ; mitad 0 -> mitad 1 (mismo simbolo)
+        sta whalf
+        rts
+wba_h1:
+        lda #$00
+        sta whalf
+        lda wsym
+        cmp #$09
+        beq wba_bytedone
+        inc wsym            ; siguiente simbolo del byte
+        rts
+wba_bytedone:
+        lda wbph
+        beq wba_cd
+        cmp #$01
+        beq wba_data
+        lda #$02            ; wbph==2 (checksum hecho) -> marcador de fin
+        sta wst
+        lda #$00
+        sta whalf
+        rts
+wba_cd:
+        dec wcdcnt
+        lda wcdcnt
+        beq wba_cd2data
+        lda wcdcnt          ; siguiente byte de countdown
+        ora wcmask
+        sta wcur
+        jsr wcalcpar
+        lda #$00
+        sta wsym
+        sta whalf
+        rts
+wba_cd2data:
+        lda #$01
+        sta wbph
+        jmp wba_loaddata
+wba_data:
+wba_loaddata:
+        lda wptr            ; si wptr < wend -> dato; si no -> checksum
+        cmp wend
+        lda wptr+1
+        sbc wend+1
+        bcc wba_loadbyte
+        jmp wba_tochk
+wba_loadbyte:
+        ldy #$00
+        lda (wptr),y
+        sta wcur
+        eor wchk
+        sta wchk            ; wchk ^= byte
+        inc wptr
+        bne wba_nd
+        inc wptr+1
+wba_nd:
+        jsr wcalcpar
+        lda #$00
+        sta wsym
+        sta whalf
+        rts
+wba_tochk:
+        lda #$02
+        sta wbph
+        lda wchk
+        sta wcur            ; byte de checksum
+        jsr wcalcpar
+        lda #$00
+        sta wsym
+        sta whalf
+        rts
+
+; wpar = paridad impar de wcur (1 XOR popcount-paridad), sin destruir wcur
+wcalcpar:
+        lda wcur
+        ldx #$08
+        ldy #$00            ; Y = cuenta de bits a 1
+wcp_l:
+        lsr a               ; bit -> carry (A guarda el dato, iny no lo toca)
+        bcc wcp_s
+        iny
+wcp_s:
+        dex
+        bne wcp_l
+        tya
+        and #$01            ; popcount mod 2
+        eor #$01            ; paridad impar = 1 XOR (popcount mod 2)
+        sta wpar
+        rts
 .org $FF5B
         jmp KCINT       ; CINT interno
 

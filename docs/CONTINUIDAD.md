@@ -315,6 +315,43 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   en RUN. Endurecer el traspaso de bloques para leaders cortos queda como
   trabajo separado.
 
+### SAVE de cinta: mecanismo de ESCRITURA (WIP, mecanismo VALIDADO)
+
+El espejo del decode de LOAD: la maquina de estados que EMITE los pulsos de un
+bloque CBM completo (2 copias). VALIDADA, pero aun NO conectada a KSAVE (no la
+llama nadie; KSAVE sigue dando error 9 para dispositivo 1). Base solida
+verificada, no usable todavia desde el comando SAVE de BASIC.
+
+- **Diseno (overhead constante)**: la IRQ (`whandler`, convencion CINV) carga
+  en Timer B el pulso ya precomputado, togglea `$01` bit3 (flanco de
+  escritura) y rearma el timer PRIMERO; el avance del estado (`jsr wgen`) va
+  DESPUES. El overhead de la IRQ es asi constante y aditivo (~69 ciclos:
+  S->453, M->597, L->757).
+- **`tape_wblock`** escribe un BLOQUE = copia1 (countdown $89..$81 + datos +
+  checksum) + copia2 (countdown $09..$01 + datos + checksum), ENCADENADAS sin
+  hueco (copia2 arranca tras el marcador de fin de copia1). El llamador deja
+  wptr=inicio (=$C1/KSAVPTR, en pagina cero para `(wptr),y`), wend=fin+1,
+  wlcnt=leader1, wleader2=leader2. Variables de escritura en $0386-$039D; el
+  bloque `wbyteadv`+`wcalcpar` vive reubicado en el hueco $FDA6-$FF5A.
+- **Cada byte**: marcador [L,M] + 8 bits LSB-primero (dipolo por bit) + dipolo
+  de paridad impar. Es el codificador autoconsistente del LOAD, en 6502.
+- **VALIDACIONES**: bloque de 1 copia identico a `cod_copia` (292 pulsos);
+  bloque de 2 copias identico a `cod_bloque` (592 pulsos); ROUND-TRIP
+  SAVE->LOAD (el SAVE de la ROM genera cabecera+datos, los lee el LOAD de la
+  ROM): programa BASIC cargado correcto salvo el byte 0 (el RE-ENLACE de
+  linea de BASIC, $080B recalculado, ortogonal al SAVE); bloque de datos del
+  SAVE byte-identico al codificador. LOAD sin regresion.
+- **Cuatro bugs corregidos**: (1) `(wptr),y` exige pagina cero (wptr a $C1);
+  (2) paridad: no reusar A para el shift del dato y el toggle (contar en Y con
+  `iny`); (3) espacio: el codigo crecio mas alla de `.org $FD15` y los
+  trampolines lo machacaban (reubicar al hueco grande); (4) copia2 no
+  reseteaba wptr (anadido wsptr).
+- **SIGUIENTE**: (A) `tape_save` (fichero completo: construir cabecera de 21
+  bytes y escribir bloque cabecera + bloque datos en una rutina ROM; el
+  orquestado esta probado en el arnes, no en la ROM); (B) integrar en KSAVE
+  (rama dispositivo 1, motor on/off, "PRESS RECORD & PLAY ON TAPE" + sense,
+  "SAVING <nombre>").
+
 ---
 
 ## 6. Metodo de verificacion (caja negra contra 1541 real)
