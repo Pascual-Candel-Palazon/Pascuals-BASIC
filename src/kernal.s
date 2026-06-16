@@ -2461,6 +2461,11 @@ bderr=$0378         ; el byte actual tuvo error de paridad (1) o no (0)
 expchk=$0379        ; checksum esperado del bloque (de una copia con paridad buena)
 expchkok=$037A      ; expchk capturado (1) o no (0)
 mcnt=$037B          ; contador scratch para el re-XOR del bloque fusionado (lo/hi)
+Sest=$037D          ; estimacion del pulso corto del leader (lo/hi)
+TSM_v=$037F         ; umbral corto/medio calculado (lo/hi)
+TML_v=$0381         ; umbral medio/largo calculado (lo/hi)
+calibr=$0383        ; 1 = midiendo el leader (calibrando velocidad), 0 = congelado
+qd=$0384            ; temporal para los calculos de umbral (lo/hi)
 TSM=456
 TML=608
 
@@ -2478,6 +2483,11 @@ tape_load:
         sta KVERCK
         sta tstop           ; sin abort por STOP todavia
         sta KSTATUS         ; ST limpio (bit4 de verify parte de cero)
+        lda #$80
+        sta Sest            ; Sest = 384 (pulso corto canonico) por defecto
+        lda #$01
+        sta Sest+1
+        jsr calc_thresh     ; umbrales por defecto (se recalibran con el leader)
         ; --- PRESS PLAY ON TAPE + esperar a que se pulse PLAY (sense $01 bit4) ---
         lda $01
         and #$10
@@ -2801,6 +2811,63 @@ resetblk:
         sta bstate
         sta syncn
         sta ncopy
+        lda #$01
+        sta calibr          ; re-calibrar velocidad con el leader de esta copia
+        rts
+
+; --- umbrales desde Sest: TSM=Sest*1.1875, TML=Sest*1.5625 (puntos medios
+;     de las ratios reales medio/corto=1.375 y largo/corto=1.79) ---
+calc_thresh:
+        lda Sest+1
+        sta qd+1
+        lda Sest
+        sta qd
+        ldx #$04
+ct_sh:
+        lsr qd+1
+        ror qd
+        dex
+        bne ct_sh           ; qd = Sest>>4
+        lda qd
+        asl a
+        sta TSM_v
+        lda qd+1
+        rol a
+        sta TSM_v+1         ; TSM_v = 2*qd
+        clc
+        lda TSM_v
+        adc qd
+        sta TSM_v
+        lda TSM_v+1
+        adc qd+1
+        sta TSM_v+1         ; TSM_v = 3*qd
+        clc
+        lda TSM_v
+        adc Sest
+        sta TSM_v
+        lda TSM_v+1
+        adc Sest+1
+        sta TSM_v+1         ; TSM_v = Sest + 3*qd  (~1.1875*Sest)
+        lda Sest+1
+        lsr a
+        sta TML_v+1
+        lda Sest
+        ror a
+        sta TML_v           ; TML_v = Sest>>1
+        clc
+        lda TML_v
+        adc qd
+        sta TML_v
+        lda TML_v+1
+        adc qd+1
+        sta TML_v+1         ; TML_v = (Sest>>1) + qd
+        clc
+        lda TML_v
+        adc Sest
+        sta TML_v
+        lda TML_v+1
+        adc Sest+1
+        sta TML_v+1         ; TML_v = Sest + (Sest>>1) + qd  (~1.5625*Sest)
         rts
 
 ; ===== pulso -> byte; manejador en convencion CINV (KIRQENT ya salvo A,X,Y) =====
@@ -2826,19 +2893,77 @@ haved:
         lda last_hi
         sbc cur_hi
         sta dhi
+        ; --- correccion de velocidad: calibrar con el pulso corto del leader ---
+        lda calibr
+        bne docalib
+        jmp doclass         ; calibr=0: clasificar directamente
+docalib:
+        lda Sest+1
+        lsr a
+        sta qd+1
+        lda Sest
+        ror a
+        sta qd
+        clc
+        lda qd
+        adc Sest
+        sta qd
+        lda qd+1
+        adc Sest+1
+        sta qd+1            ; qd = 1.5*Sest (umbral de fin de leader)
         lda dlo
-        cmp #<TSM
+        cmp qd
         lda dhi
-        sbc #>TSM
+        sbc qd+1
+        bcs cal_end         ; duracion >= 1.5*Sest -> primer marcador, fin del leader
+        ; pulso de leader (corto): Sest = (3*Sest + duracion)/4
+        lda Sest
+        asl a
+        sta qd
+        lda Sest+1
+        rol a
+        sta qd+1
+        clc
+        lda qd
+        adc Sest
+        sta qd
+        lda qd+1
+        adc Sest+1
+        sta qd+1            ; qd = 3*Sest
+        clc
+        lda qd
+        adc dlo
+        sta qd
+        lda qd+1
+        adc dhi
+        sta qd+1            ; qd = 3*Sest + duracion
+        lsr qd+1
+        ror qd
+        lsr qd+1
+        ror qd              ; qd = (3*Sest + duracion)/4
+        lda qd
+        sta Sest
+        lda qd+1
+        sta Sest+1
+        jmp doclass         ; pulso de leader: medido Y clasificado (corto, state=0 lo ignora)
+cal_end:
+        lda #$00
+        sta calibr
+        jsr calc_thresh     ; congelar: umbrales desde el Sest calibrado
+doclass:
+        lda dlo
+        cmp TSM_v
+        lda dhi
+        sbc TSM_v+1
         bcs ge_sm
         lda #$00
         sta tcls
         jmp classified
 ge_sm:
         lda dlo
-        cmp #<TML
+        cmp TML_v
         lda dhi
-        sbc #>TML
+        sbc TML_v+1
         bcs ge_ml
         lda #$01
         sta tcls

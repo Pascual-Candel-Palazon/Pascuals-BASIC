@@ -39,7 +39,10 @@ an opaque peripheral):
   FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
   during load (BREAK, back to READY), and VERIFY (`VERIFY"NAME",1` compares
   the tape against memory and reports `?VERIFY ERROR` on a mismatch).
-  Tape SAVE not yet implemented.
+  Adaptive speed correction (the short/medium/long pulse thresholds are
+  recentred from the leader's measured short pulse) tolerates roughly -10%
+  to +45% tape-speed deviation; the encoding matches the real CBM format and
+  nominal PAL and NTSC tapes load. Tape SAVE not yet implemented.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
