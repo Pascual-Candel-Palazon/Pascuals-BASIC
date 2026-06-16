@@ -42,7 +42,10 @@ an opaque peripheral):
   Adaptive speed correction (the short/medium/long pulse thresholds are
   recentred from the leader's measured short pulse) tolerates roughly -10%
   to +45% tape-speed deviation; the encoding matches the real CBM format and
-  nominal PAL and NTSC tapes load. Tape SAVE not yet implemented.
+  nominal PAL and NTSC tapes load. Tape SAVE: the write mechanism (the CBM
+  two-copy block encoder, mirror of the load decode) is implemented and
+  verified by a full SAVE-to-LOAD round trip, but is not yet wired to the
+  BASIC `SAVE` command (see Roadmap).
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -54,7 +57,8 @@ verification method, lessons learned, roadmap) lives in
 ## Roadmap
 
 - Own character generator (chargen) to replace the temporary borrowed one
-- Datasette (tape) SAVE
+- Datasette (tape) SAVE: finish `tape_save` (header + data file writer) and
+  wire it into the BASIC `SAVE` command (the two-copy block writer is done)
 - Linear string garbage collector: the BASIC inherits Microsoft's
   original quadratic GC (long pauses with thousands of strings). To be
   improved using the published algorithm (back-pointer technique),
