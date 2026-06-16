@@ -261,7 +261,21 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   Verificado: STOP durante carga normal aborta con BREAK; y STOP rescata el
   cuelgue de "nombre no encontrado" (`LOAD"ZZZ"` escanea, no halla, se
   cuelga buscando la siguiente cabecera; STOP -> BREAK, nada cargado).
-- **LIMITES** (refinables, sobre base que funciona): no VERIFY;
+- **HECHO (refinamiento)**: VERIFY de cinta. `VERIFY"NAME",1` compara la
+  cinta contra memoria y pone ST bit4 ($10) en discrepancia; el comando
+  BASIC muestra "?VERIFY ERROR" si hay diferencia y vuelve a READY si todo
+  coincide. Detalles: el flag KVERCK (load=0 / verify=1) lo pone KLOAD desde
+  A en la entrada de $FFD5; el comando BVERIFY hace `lda #$01` antes del
+  `jsr $FFD5`. La CABECERA se almacena SIEMPRE (KVERCK se guarda en tverify
+  y se limpia al entrar a tape_load; se restaura en tl_match para el bloque
+  de datos), porque si no, la cabecera se compararia contra basura y el
+  nombre/direcciones saldrian mal. En el bloque de datos, bb_data compara
+  (dest) contra el byte decodificado en vez de almacenar, y pone ST bit4 en
+  discrepancia (igual que la ruta serie). El mensaje "VERIFYING" lo elige
+  KLDGMSG segun KVERCK. Verificado KERNAL-level (match: ST=$00, sin escribir
+  memoria; mismatch: ST=$10) y end-to-end via BASIC (mismatch -> "?VERIFY
+  ERROR"; match -> READY sin error).
+- **LIMITES** (refinables, sobre base que funciona):
   recuperacion a nivel de copia (no fusion byte a byte). SAVE de cinta no
   implementado.
 - **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync

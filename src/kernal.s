@@ -2456,6 +2456,7 @@ bval=$0361
 tsav=$033C
 tstop=$033E         ; bandera de abort por RUN/STOP durante la carga
 dcstopc=$033F       ; contador para throttle del sondeo de STOP
+tverify=$0377       ; VERIFY real guardado (la cabecera se almacena siempre)
 TSM=456
 TML=608
 
@@ -2467,8 +2468,12 @@ tape_load:
         sta tsav
         lda $0315
         sta tsav+1
+        lda KVERCK
+        sta tverify         ; recordar VERIFY; la cabecera se almacena siempre
         lda #$00
+        sta KVERCK
         sta tstop           ; sin abort por STOP todavia
+        sta KSTATUS         ; ST limpio (bit4 de verify parte de cero)
         ; --- PRESS PLAY ON TAPE + esperar a que se pulse PLAY (sense $01 bit4) ---
         lda $01
         and #$10
@@ -2517,8 +2522,8 @@ tl_nextfile:
         sta dest
         lda #$03
         sta dest+1
-        lda #$C0
-        sta maxst
+        lda #21             ; almacenar solo ftype+start+end+nombre (21 bytes)
+        sta maxst           ; el relleno/checksum se lee para el XOR pero no se almacena
         lda #$00
         sta maxst+1
         jsr read_block
@@ -2564,13 +2569,9 @@ tl_skip:
         bne tl_break        ; RUN/STOP mientras se salta un fichero
         jmp tl_nextfile
 tl_match:
-        ; --- LOADING (si mensajes ON) ---
-        bit KMSGFL
-        bpl tl_noload
-        lda #<MLOAD
-        ldy #>MLOAD
-        jsr STROUT
-tl_noload:
+        lda tverify
+        sta KVERCK          ; restaurar VERIFY para el bloque de datos
+        jsr KLDGMSG         ; "LOADING" / "VERIFYING" segun KVERCK (si mensajes ON)
         ; destino: SA=0 -> KLDPTR ; SA<>0 -> direccion del fichero
         lda KSA
         bne tl_fileaddr
@@ -2931,10 +2932,22 @@ bb_data:
         cmp maxst
         lda dcnt+1
         sbc maxst+1
-        bcs bb_nost        ; dcnt >= maxst -> no escribir
+        bcs bb_nost        ; dcnt >= maxst -> no escribir/comparar
+        lda KVERCK
+        bne bb_vrf         ; verify: comparar en vez de almacenar
         lda bval
         ldy #$00
         sta (dest),y
+        jmp bb_dinc
+bb_vrf:
+        ldy #$00
+        lda (dest),y
+        cmp bval           ; memoria vs byte decodificado
+        beq bb_dinc        ; coincide
+        lda KSTATUS
+        ora #$10           ; bit4: error de verificacion
+        sta KSTATUS
+bb_dinc:
         inc dest
         bne bb_d1
         inc dest+1

@@ -35,8 +35,9 @@ an opaque peripheral):
   checksum, dual copy with copy-level recovery). Supports filename
   matching (`LOAD"NAME",1` scans and skips non-matching files, CBM-style
   prefix match; no name loads the first file), the PRESS PLAY ON TAPE /
-  FOUND <name> / LOADING messages with a PLAY-sense wait, and RUN/STOP
-  abort during load (BREAK, back to READY). Current limit: no VERIFY.
+  FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
+  during load (BREAK, back to READY), and VERIFY (`VERIFY"NAME",1` compares
+  the tape against memory and reports `?VERIFY ERROR` on a mismatch).
   Tape SAVE not yet implemented.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
@@ -49,8 +50,8 @@ verification method, lessons learned, roadmap) lives in
 ## Roadmap
 
 - Own character generator (chargen) to replace the temporary borrowed one
-- Datasette (tape) SAVE, and tape LOAD refinements: VERIFY and byte-level
-  merge of the two block copies
+- Datasette (tape) SAVE, and byte-level merge of the two block copies on
+  tape LOAD
 - Linear string garbage collector: the BASIC inherits Microsoft's
   original quadratic GC (long pauses with thousands of strings). To be
   improved using the published algorithm (back-pointer technique),
