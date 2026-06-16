@@ -288,10 +288,32 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
 - **LIMITES** (refinables, sobre base que funciona): SAVE de cinta no
   implementado. VERIFY usa recuperacion a nivel de copia (no aplica la
   fusion byte a byte; es una comprobacion, no una carga).
-- **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync
-  son autoconsistentes (nuestro codificador<->decodificador). Para leer
-  cintas C64 REALES habria que clavar las longitudes/sync exactos del
-  estandar CBM (afinado posterior); el mecanismo esta probado.
+- **HECHO (refinamiento)**: correccion adaptativa de velocidad. El umbral
+  corto/medio/largo se recalcula a partir del pulso corto del leader, que se
+  mide al vuelo (Sest, suavizado (3*Sest+dur)/4) y se congela al primer
+  marcador (pulso >= 1.5*Sest). Los umbrales son TSM=Sest*1.1875 y
+  TML=Sest*1.5625 (puntos medios de las ratios reales medio/corto=1.375 y
+  largo/corto=1.79). La calibracion es EFECTO COLATERAL del decode: los
+  pulsos del leader siguen fluyendo por la maquina de estados (clasificados
+  como cortos, ignorados con state=0); NO se saltan. Saltarlos (jmp setlast)
+  desincronizaba el traspaso header->dato del decode IRQ-continuo y hacia que
+  un do_copy sobre-leyera el bloque siguiente (bug detectado y corregido en
+  esta iteracion). Tolerancia medida ~[-10%, +45%] de desviacion uniforme de
+  velocidad (antes -4%/+8% con umbrales fijos), monotona. Sin regresion en la
+  bateria de cinta ni determinista.
+- **VERIFICADO contra valores reales**: el esquema de codificacion coincide
+  con el formato CBM real (corto/medio/largo = nuevo-dato/marcador, fin de
+  bloque, bits; 8 bits LSB, paridad impar, countdown de sync). Cargan las
+  tres: canonico .TAP (384/528/688 ciclos), PAL (347/504/662) y NTSC
+  (360/524/687). El KERNAL original tambien usa correccion adaptativa.
+- **LIMITE conocido (PREEXISTENTE, no de la calibracion)**: con un leader de
+  copy2 muy corto (~20 pulsos, irrealista) el LOAD lee los datos bien pero no
+  retorna limpio a READY (el do_copy de copy2 sobre-lee el fin del stream de
+  flancos). Confirmado IDENTICO con y sin calibracion (a36bdcf). Las cintas
+  CBM reales tienen leaders de cientos/miles de pulsos, asi que no afecta en
+  la practica; test_e2e_run (no canonico) usa ese leader corto y por eso falla
+  en RUN. Endurecer el traspaso de bloques para leaders cortos queda como
+  trabajo separado.
 
 ---
 
