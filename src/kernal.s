@@ -2454,6 +2454,8 @@ loaddn=$035F
 ftype=$0360
 bval=$0361
 tsav=$033C
+tstop=$033E         ; bandera de abort por RUN/STOP durante la carga
+dcstopc=$033F       ; contador para throttle del sondeo de STOP
 TSM=456
 TML=608
 
@@ -2465,6 +2467,8 @@ tape_load:
         sta tsav
         lda $0315
         sta tsav+1
+        lda #$00
+        sta tstop           ; sin abort por STOP todavia
         ; --- PRESS PLAY ON TAPE + esperar a que se pulse PLAY (sense $01 bit4) ---
         lda $01
         and #$10
@@ -2518,6 +2522,10 @@ tl_nextfile:
         lda #$00
         sta maxst+1
         jsr read_block
+        lda tstop
+        beq tl_hdrnostop    ; sin abort -> seguir
+        jmp tl_break        ; RUN/STOP durante la lectura de cabecera
+tl_hdrnostop:
         bcs tl_hdrok
         jmp tl_err
 tl_hdrok:
@@ -2552,6 +2560,8 @@ tl_cmp:
 tl_skip:
         ; no coincide: descartar su bloque de datos y leer la siguiente cabecera
         jsr skip_block
+        lda tstop
+        bne tl_break        ; RUN/STOP mientras se salta un fichero
         jmp tl_nextfile
 tl_match:
         ; --- LOADING (si mensajes ON) ---
@@ -2587,6 +2597,8 @@ tl_setlen:
         lda dest+1
         sta starthi
         jsr read_block
+        lda tstop
+        bne tl_break        ; RUN/STOP durante la lectura de datos
         bcc tl_err
         clc
         lda startlo
@@ -2605,6 +2617,11 @@ tl_err:
         lda #$04
         sec
         rts
+tl_break:
+        jsr tl_restore
+        lda #$00
+        sec
+        jmp STOP            ; RUN/STOP durante la carga: BREAK y vuelta a READY
 tl_restore:
         sei
         lda #$7F
@@ -2663,6 +2680,8 @@ read_block:
         lda #$01
         sta got
 rb1bad:
+        lda tstop
+        bne rbdone          ; STOP durante copia1: no leer copia2 (evita colgarse)
         ; copia 2
         lda got
         beq rb2store
@@ -2701,10 +2720,21 @@ do_copy:
         sta dcnt+1
         sta chk
         sta blkstat
+        sta dcstopc
         jsr resetblk
 dcwait:
         lda blkstat
-        beq dcwait
+        bne dcdone
+        dec dcstopc
+        bne dcwait          ; throttle: sondear RUN/STOP cada 256 vueltas
+        lda #$7F
+        sta $DC00           ; fila 7 del teclado (RUN/STOP)
+        lda $DC01
+        and #$80            ; bit7 = RUN/STOP
+        bne dcwait          ; no pulsada -> seguir esperando el bloque
+        lda #$80
+        sta tstop           ; pulsada -> marcar abort y salir del spin
+dcdone:
         lda blkstat
         rts
 

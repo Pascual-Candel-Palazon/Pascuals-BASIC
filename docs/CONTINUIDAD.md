@@ -248,9 +248,22 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   y luego espera una tercera inexistente -> cuelgue). Con leader largo el
   decode se arma durante el leader y va bien. El codificador de pruebas usa
   256 pulsos de leader en los bloques de datos.
-- **LIMITES** (refinables, sobre base que funciona): no VERIFY; sin
-  vigilancia de STOP durante la carga; recuperacion a nivel de copia (no
-  fusion byte a byte). SAVE de cinta no implementado.
+- **HECHO (refinamiento)**: abort por RUN/STOP durante la carga. El jiffy
+  esta deshabilitado durante la carga (IRQ redirigido al manejador de
+  cinta), asi que la bandera $91 de STOP no se actualiza; se sondea la
+  tecla DIRECTAMENTE leyendo la matriz (fila 7 / bit 7) en el spin de
+  `do_copy`, throttled cada 256 vueltas para no bloquear el FLAG. El sondeo
+  es inline y SIN sei (el IRQ de cinta no toca $DC00/01, no hay carrera; y
+  el arnes py65 pierde edges durante sei al no modelar el latch del ICR).
+  Al detectar STOP: `read_block` corta tras copy1 (sin esto, copy2 se
+  cuelga si ya no hay pulsos), `tape_load` restaura (motor off, CINV,
+  timer A) y salta al BREAK del BASIC (`jmp STOP`), volviendo a READY.
+  Verificado: STOP durante carga normal aborta con BREAK; y STOP rescata el
+  cuelgue de "nombre no encontrado" (`LOAD"ZZZ"` escanea, no halla, se
+  cuelga buscando la siguiente cabecera; STOP -> BREAK, nada cargado).
+- **LIMITES** (refinables, sobre base que funciona): no VERIFY;
+  recuperacion a nivel de copia (no fusion byte a byte). SAVE de cinta no
+  implementado.
 - **NOTA de compatibilidad**: las longitudes de pulso y el esquema de sync
   son autoconsistentes (nuestro codificador<->decodificador). Para leer
   cintas C64 REALES habria que clavar las longitudes/sync exactos del
