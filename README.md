@@ -30,6 +30,28 @@ an opaque peripheral):
 - Filename wildcards (matched by the 1541) and chained LOAD: a `LOAD`
   inside a running program re-runs the loaded program from its first
   line, preserving variables
+- **Datasette (tape) LOAD** (clean-room CBM tape decode, verified end to
+  end: `LOAD"",1` followed by `RUN` loads and runs a program from tape).
+  Reads the CBM block format (sync countdown, per-byte parity, XOR
+  checksum, dual copy with byte-level merge that recovers a block even
+  when each copy has read errors in different bytes). Supports filename
+  matching (`LOAD"NAME",1` scans and skips non-matching files, CBM-style
+  prefix match; no name loads the first file), the PRESS PLAY ON TAPE /
+  FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
+  during load (BREAK, back to READY), and VERIFY (`VERIFY"NAME",1` compares
+  the tape against memory and reports `?VERIFY ERROR` on a mismatch). If the
+  tape stops mid-read (short leaders, an unexpected end, or a file that is not
+  on the tape), the loader times out and returns instead of hanging.
+  Adaptive speed correction (the short/medium/long pulse thresholds are
+  recentred from the leader's measured short pulse) tolerates roughly -10%
+  to +45% tape-speed deviation; the encoding matches the real CBM format and
+  nominal PAL and NTSC tapes load. Tape SAVE is implemented and wired into the
+  BASIC `SAVE"NAME",1` command: it writes a header block plus a data block (the
+  CBM two-copy format), with motor control, the "PRESS RECORD & PLAY ON TAPE"
+  prompt and `SAVING` message, and it disables the jiffy IRQ during the write so
+  the timing stays clean. Verified end to end by typing `SAVE"",1` on one
+  machine and `LOAD"",1` on another: the program survives the round trip byte
+  for byte.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -41,7 +63,6 @@ verification method, lessons learned, roadmap) lives in
 ## Roadmap
 
 - Own character generator (chargen) to replace the temporary borrowed one
-- Datasette (tape) LOAD/SAVE
 - Linear string garbage collector: the BASIC inherits Microsoft's
   original quadratic GC (long pauses with thousands of strings). To be
   improved using the published algorithm (back-pointer technique),

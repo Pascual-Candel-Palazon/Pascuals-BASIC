@@ -193,6 +193,32 @@ sk:
 """
 
 text = open(SRC, encoding="latin-1").read()
+
+# [C64] Pantalla de arranque al estilo C64. El banner del upstream MIT
+# (REALIO=3, generado por flatten.py) es:
+#     DT"### COMMODORE BASIC ###" + CR + CR + null
+# Se reescribe aqui, en la capa de traduccion, sin tocar el upstream:
+#   - CR inicial: linea en blanco encima del titulo.
+#   - "### COMMODORE BASIC ###" -> nombre propio del proyecto (no se usa la
+#     marca registrada de Commodore).
+#   - " 64K RAM SYSTEM  " antes del null: queda en la misma linea que el
+#     numero de bytes libres (que el arranque imprime justo despues), igual
+#     que en el C64 real.
+text = text.replace(
+    '\tDT"### COMMODORE BASIC ###"\n\tEXP\t^O15\n\tEXP\t^O15\n\n\n\t0',
+    '\tEXP\t^O15\n'
+    '\tDT"       **** PASCUAL\'S BASIC ****"\n'
+    '\tEXP\t^O15\n'
+    '\tEXP\t^O15\n'
+    '\tDT" 64K RAM SYSTEM  "\n'
+    '\t0')
+
+# [C64] " BASIC BYTES FREE" en vez de " BYTES FREE", como el C64 real. WORDS
+# se imprime justo despues del numero de bytes libres en el arranque.
+text = text.replace(
+    'WORDS:\tDT" BYTES FREE"',
+    'WORDS:\tDT" BASIC BYTES FREE"')
+
 lines = text.splitlines()
 
 # --- pasada 1: contar asignaciones por simbolo ---
@@ -485,14 +511,10 @@ if C64:
     # Delta C64: vector USR en el $0310 estandar (POKE 785/786), no en ZP.
     result = result.replace("USRPOK:\tJMP\tFCERR\t;SET UP ORIG BY INIT.",
                             "USRPOK = 784 ;[C64] vector USR en $0310 estandar")
-# [C64] Banner de arranque: sustituir la cadena de marca registrada de
-# Commodore por el nombre propio del proyecto. La cadena original del
-# upstream MIT es "### COMMODORE BASIC ###" (REALIO=3, generada por
-# flatten.py). Se cambia aqui, en la capa de traduccion, sin tocar el
-# upstream (que se conserva intacto con su licencia MIT original).
-result = result.replace(
-    '\tDT "### COMMODORE BASIC ###"',
-    '\tDT "       **** PASCUAL\'S BASIC ****"')
+# [C64] Banner de arranque: ver la reescritura al estilo C64 al inicio del
+# script (sobre el texto crudo, justo tras leer el fuente). Alli se cambia la
+# marca registrada de Commodore por el nombre propio, se anade la linea en
+# blanco superior y el "64K RAM SYSTEM".
 # [C64] Mensajes de error LARGOS: sustituir la impresion de los 2 chars
 # del codigo de error (NF/SN/...) por una llamada a KERRMSG (en kernal.s),
 # que imprime el texto completo desde una tabla de punteros indexada por el
