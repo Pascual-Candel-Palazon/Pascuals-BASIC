@@ -213,6 +213,12 @@ text = text.replace(
     '\tDT" 64K RAM SYSTEM  "\n'
     '\t0')
 
+# [C64] " BASIC BYTES FREE" en vez de " BYTES FREE", como el C64 real. WORDS
+# se imprime justo despues del numero de bytes libres en el arranque.
+text = text.replace(
+    'WORDS:\tDT" BYTES FREE"',
+    'WORDS:\tDT" BASIC BYTES FREE"')
+
 lines = text.splitlines()
 
 # --- pasada 1: contar asignaciones por simbolo ---
