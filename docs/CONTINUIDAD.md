@@ -315,12 +315,13 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   en RUN. Endurecer el traspaso de bloques para leaders cortos queda como
   trabajo separado.
 
-### SAVE de cinta: mecanismo de ESCRITURA (WIP, mecanismo VALIDADO)
+### SAVE de cinta: ESCRITURA completa, integrada en KSAVE (HECHO y VERIFICADO)
 
 El espejo del decode de LOAD: la maquina de estados que EMITE los pulsos de un
-bloque CBM completo (2 copias). VALIDADA, pero aun NO conectada a KSAVE (no la
-llama nadie; KSAVE sigue dando error 9 para dispositivo 1). Base solida
-verificada, no usable todavia desde el comando SAVE de BASIC.
+bloque CBM completo (2 copias). YA esta conectada: `tape_save` escribe un
+fichero (cabecera + datos) y KSAVE la invoca para dispositivo 1, asi que el
+comando `SAVE"NOMBRE",1` de BASIC funciona. Round-trip validado por el punto de
+entrada oficial KSAVE (`$FFD8`) con el jiffy (timer A) vivo.
 
 - **Diseno (overhead constante)**: la IRQ (`whandler`, convencion CINV) carga
   en Timer B el pulso ya precomputado, togglea `$01` bit3 (flanco de
@@ -346,11 +347,30 @@ verificada, no usable todavia desde el comando SAVE de BASIC.
   `iny`); (3) espacio: el codigo crecio mas alla de `.org $FD15` y los
   trampolines lo machacaban (reubicar al hueco grande); (4) copia2 no
   reseteaba wptr (anadido wsptr).
-- **SIGUIENTE**: (A) `tape_save` (fichero completo: construir cabecera de 21
-  bytes y escribir bloque cabecera + bloque datos en una rutina ROM; el
-  orquestado esta probado en el arnes, no en la ROM); (B) integrar en KSAVE
-  (rama dispositivo 1, motor on/off, "PRESS RECORD & PLAY ON TAPE" + sense,
-  "SAVING <nombre>").
+- **`tape_save`** (`$FE56`, espejo de `tape_load`): escribe el fichero entero.
+  (1) "PRESS RECORD & PLAY ON TAPE" (`MRECORD`) + espera del sense (`$01`
+  bit4=0); (2) "SAVING <nombre>" (`KSAVMSG`); (3) motor on + DESHABILITA el
+  jiffy (`$DC0D=$01`, lee `$DC0D` para limpiar pendientes); (4) guarda el
+  inicio en `tsstart` (`$039E`), porque el bloque de cabecera machaca
+  wptr=`$C1`; (5) construye la cabecera de 21 bytes en `$0362` (libre durante
+  SAVE) [ftype=1, inicio, fin, nombre(16, pad $20)]; (6) bloque cabecera
+  (wptr=`$0362`, wend=`$0377`, leader 40/24); (7) bloque datos (wptr=tsstart,
+  wend=KLDPTR, leader 32/20); (8) motor off + REHABILITA el jiffy
+  (`$DC0D=$81`); (9) `clc/rts`.
+- **Timer A (jiffy)**: `tape_wblock` NO lo toca (solo habilita el timer B).
+  `tape_save` lo deshabilita ANTES de llamar a `tape_wblock` (antes de instalar
+  whandler) y lo rehabilita al final, asi el jiffy no genera pulsos espurios
+  durante la escritura. Confirmado: 0 disparos del jiffy durante la escritura
+  activa.
+- **Integracion en KSAVE** (rama dispositivo < 4, tras montar KSAVPTR=inicio y
+  KLDPTR=fin+1): `cmp #$01 / beq @tape` (dispositivo 1 = cinta) antes del error
+  9; `@tape: jmp tape_save`. El SAVE serie (>=4) intacto.
+- **VALIDACIONES adicionales**: round-trip `tape_save`->LOAD 12/12 bytes
+  (test_tape_save.py); idem con el jiffy disparandose, timer A gestionado
+  (test_tape_save_jiffy.py); round-trip por el punto de entrada KSAVE `$FFD8`
+  con la convencion de registros de BASIC (A=`$2B`, X/Y=VARTAB), retorno sin
+  error, 12/12 bytes (test_ksave.py). El unico trozo no probado end-to-end es
+  el parser del comando SAVE de BASIC, COMPARTIDO con el SAVE serie ya probado.
 
 ---
 
