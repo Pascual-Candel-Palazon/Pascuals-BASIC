@@ -2211,9 +2211,12 @@ KSAVE:  stx KLDPTR          ; fin+1
         lda KFA
         cmp #$04
         bcs @ser
-        lda #$09
+        cmp #$01
+        beq @tape           ; dispositivo 1 = cinta
+        lda #$09            ; otros dispositivos < 4: no soportado
         sec
         rts
+@tape:  jmp tape_save       ; KSAVPTR=inicio, KLDPTR=fin+1, nombre via SETNAM
 @ser:   lda #$00
         sta KSTATUS
         jsr KSAVMSG         ; "SAVING <nombre>" si los mensajes ON
@@ -2485,6 +2488,7 @@ wchk=$0398          ; checksum acumulado (XOR de datos)
 wcopy=$0399         ; numero de copia (1 o 2)
 wleader2=$039A      ; pulsos de leader de la copia 2 (lo/hi)
 wsptr=$039C         ; puntero de inicio de datos guardado, para resetear en copia 2 (lo/hi)
+tsstart=$039E       ; inicio guardado por tape_save (el bloque de cabecera machaca KSAVPTR) (lo/hi)
 TSM=456
 TML=608
 
@@ -2682,6 +2686,7 @@ tl_pn:  lda $0367,y
         bne tl_pn
         rts
 MPLAY:  .byte $0D,"PRESS PLAY ON TAPE",0
+MRECORD:.byte $0D,"PRESS RECORD & PLAY ON TAPE",0
 MFOUND: .byte $0D,"FOUND ",0
 
 ; descarta un bloque completo (ambas copias) sin escribir memoria: tstore=0
@@ -3611,6 +3616,113 @@ wcp_s:
         eor #$01            ; paridad impar = 1 XOR (popcount mod 2)
         sta wpar
         rts
+
+; ------------------------------------------------------------
+; tape_save: escribe un fichero completo en cinta (bloque cabecera + bloque
+; datos), espejo de tape_load. Lo llama KSAVE en la rama dispositivo 1.
+; Entradas (las deja KSAVE): KSAVPTR ($C1/$C2)=inicio, KLDPTR ($AE/$AF)=fin+1,
+;   nombre via SETNAM (KFNLEN, (KFNADR)). ftype fijado a 1 (programa).
+; (Esta version NO controla motor/sense/mensajes; eso va aparte.)
+; ------------------------------------------------------------
+tape_save:
+        ; --- PRESS RECORD & PLAY ON TAPE + esperar sense ($01 bit4) ---
+        lda $01
+        and #$10
+        beq ts_playok       ; bit4=0 -> tecla ya pulsada
+        bit KMSGFL
+        bpl ts_waitp        ; mensajes off (cargador) -> esperar en silencio
+        lda #<MRECORD
+        ldy #>MRECORD
+        jsr STROUT
+ts_waitp:
+        lda $01
+        and #$10
+        bne ts_waitp        ; esperar a bit4=0
+ts_playok:
+        jsr KSAVMSG         ; "SAVING <nombre>" si los mensajes ON
+        ; motor on + deshabilitar el jiffy (timer A) durante la escritura
+        lda $01
+        and #$DF
+        sta $01             ; motor on (bit5=0)
+        lda #$01
+        sta $DC0D           ; deshabilitar IRQ de timer A
+        lda $DC0D           ; limpiar flags pendientes
+        ; guardar el inicio (el bloque de cabecera machaca wptr=KSAVPTR)
+        lda KSAVPTR
+        sta tsstart
+        lda KSAVPTR+1
+        sta tsstart+1
+        ; construir la cabecera de 21 bytes en $0362 (libre durante SAVE)
+        lda #$01
+        sta $0362           ; ftype = 1
+        lda tsstart
+        sta $0363           ; start lo
+        lda tsstart+1
+        sta $0364           ; start hi
+        lda KLDPTR
+        sta $0365           ; end lo
+        lda KLDPTR+1
+        sta $0366           ; end hi
+        ldy #$00
+ts_nm:
+        cpy #$10
+        bcs ts_nmend        ; y >= 16 -> nombre completo
+        cpy KFNLEN
+        bcs ts_pad          ; y >= longitud -> rellenar con espacio
+        lda (KFNADR),Y
+        jmp ts_put
+ts_pad:
+        lda #$20
+ts_put:
+        sta $0367,Y
+        iny
+        jmp ts_nm
+ts_nmend:
+        ; --- escribir bloque de CABECERA (leader 40/24) ---
+        lda #<$0362
+        sta wptr
+        lda #>$0362
+        sta wptr+1
+        lda #<$0377
+        sta wend            ; $0362 + 21 = $0377
+        lda #>$0377
+        sta wend+1
+        lda #40
+        sta wlcnt
+        lda #$00
+        sta wlcnt+1
+        lda #24
+        sta wleader2
+        lda #$00
+        sta wleader2+1
+        jsr tape_wblock
+        ; --- escribir bloque de DATOS (leader 32/20) ---
+        lda tsstart
+        sta wptr            ; restaurar el inicio
+        lda tsstart+1
+        sta wptr+1
+        lda KLDPTR
+        sta wend            ; fin+1
+        lda KLDPTR+1
+        sta wend+1
+        lda #32
+        sta wlcnt
+        lda #$00
+        sta wlcnt+1
+        lda #20
+        sta wleader2
+        lda #$00
+        sta wleader2+1
+        jsr tape_wblock
+        ; motor off + rehabilitar el jiffy (timer A)
+        lda $01
+        ora #$20
+        sta $01             ; motor off (bit5=1)
+        lda #$81
+        sta $DC0D           ; rehabilitar IRQ de timer A
+        clc
+        rts
+
 .org $FF5B
         jmp KCINT       ; CINT interno
 
