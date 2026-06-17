@@ -369,8 +369,13 @@ entrada oficial KSAVE (`$FFD8`) con el jiffy (timer A) vivo.
   (test_tape_save.py); idem con el jiffy disparandose, timer A gestionado
   (test_tape_save_jiffy.py); round-trip por el punto de entrada KSAVE `$FFD8`
   con la convencion de registros de BASIC (A=`$2B`, X/Y=VARTAB), retorno sin
-  error, 12/12 bytes (test_ksave.py). El unico trozo no probado end-to-end es
-  el parser del comando SAVE de BASIC, COMPARTIDO con el SAVE serie ya probado.
+  error, 12/12 bytes (test_ksave.py); y ROUND-TRIP BASIC COMPLETO TECLEADO en
+  dos maquinas (test_basic_rt.py): la maquina A arranca BASIC, teclea un
+  programa y `SAVE"",1` (capturando los pulsos), la maquina B arranca BASIC y
+  teclea `LOAD"",1` alimentandolos; el programa se carga byte-identico, sin
+  error. Esto cubre el camino entero (editor de BASIC, parser de SAVE, KSAVE,
+  tape_save, los pulsos, tape_load, parser de LOAD): ya no queda nada del
+  camino de SAVE sin probar end-to-end.
 
 ---
 
