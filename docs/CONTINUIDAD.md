@@ -211,6 +211,182 @@ La SA de SETLFS (el `,1` de `LOAD"x",8,1`) controla SOLO la relocalizacion
 del lado C64 (SA=0 relocaliza a X/Y; SA!=0 usa la direccion del fichero),
 NUNCA el canal IEC. Usar `$F0|SA`/`$60|SA` rompe el LOAD (manda canal 1).
 
+### LOAD de cinta (datasette, dispositivo 1): IMPLEMENTADO y VERIFICADO
+
+Decode clean-room del formato CBM de cinta, verificado end-to-end
+(`LOAD"",1` + `RUN` carga y ejecuta un programa, comprobado en py65 con un
+modelo del Timer B del CIA1 + interrupcion FLAG).
+
+- **Enganche**: en `KLOAD`, rama dispositivo<4: `lda KFA / cmp #$01 / beq ->
+  tape_load`; si no, error 9 como antes. El camino serie (>=4) intacto.
+- **`tape_load`** (en espacio libre del KERNAL, ~$F463): guarda CINV y lo
+  redirige a un manejador de cinta en CONVENCION CINV (no re-salva
+  registros; epilogo `pla/tay/pla/tax/pla/rti` como KIRQ); CIA1 timer B
+  continuo + deshabilita IRQ de timer A + habilita FLAG; motor on (`$01`
+  bit5=0); lee cabecera y datos; al terminar restaura timer A, CINV y motor.
+  Devuelve fin+1 en X/Y (clc) o error en A (sec), igual que el serie.
+- **Formato** (codificador<->decodificador autoconsistente): dipolos de
+  pulso (corto/medio/largo), marcador de byte (L,M), 8 bits LSB + paridad
+  impar, fin de bloque (L,S); bloque = leader + cuenta atras de sync
+  ($89..$81 copia1 / $09..$01 copia2) + datos + checksum XOR. Doble copia
+  con fusion byte a byte: copia1 se almacena (los bytes con error de paridad
+  se pasan con flag bderr para no desalinear); si copia1 falla el checksum,
+  copia2 se lee en modo merge y sobrescribe solo los bytes que trae con
+  paridad buena; el bloque fusionado se valida re-XOR contra el checksum
+  esperado (chk_merged). Recupera un bloque aunque cada copia tenga errores
+  en bytes distintos; falla solo si el MISMO byte esta mal en ambas.
+- **Memoria**: punteros en ZP libre ($A8-$AB); estado en el buffer de cinta
+  ($0340-$0361); `tsav` (CINV guardado) en $033C; cabecera leida en $0362.
+  CUIDADO con la colision que tuvo `tsav`: estaba en $0367 DENTRO del buffer
+  de cabecera, y los bytes del nombre lo machacaban -> CINV a basura ->
+  cuelgue tras cada load. Lo destapo la verificacion end-to-end. Movido a
+  $033C (libre, debajo del scratch).
+- **HECHO (refinamiento)**: casa nombre (`LOAD"NAME",1` escanea y salta los
+  ficheros que no coinciden, prefijo estilo CBM; sin nombre carga el
+  primero); mensajes PRESS PLAY ON TAPE / FOUND <nombre> / LOADING con
+  espera del sense de PLAY ($01 bit4). Verificado end-to-end (LOAD+RUN) y
+  con cinta de 2 ficheros (`LOAD"DOS"` salta UNO y carga DOS). REQUISITO de
+  formato: el bloque de datos necesita un leader adecuado (las cintas CBM
+  reales lo tienen). Causa: el IRQ procesa bloques de forma autonoma; si
+  imprimir FOUND/LOADING tarda mas que el leader, la copia1 del bloque pasa
+  durante la impresion y la lectura se desalinea (do_copy captura la copia2
+  y luego espera una tercera inexistente -> cuelgue). Con leader largo el
+  decode se arma durante el leader y va bien. El codificador de pruebas usa
+  256 pulsos de leader en los bloques de datos.
+- **HECHO (refinamiento)**: abort por RUN/STOP durante la carga. El jiffy
+  esta deshabilitado durante la carga (IRQ redirigido al manejador de
+  cinta), asi que la bandera $91 de STOP no se actualiza; se sondea la
+  tecla DIRECTAMENTE leyendo la matriz (fila 7 / bit 7) en el spin de
+  `do_copy`, throttled cada 256 vueltas para no bloquear el FLAG. El sondeo
+  es inline y SIN sei (el IRQ de cinta no toca $DC00/01, no hay carrera; y
+  el arnes py65 pierde edges durante sei al no modelar el latch del ICR).
+  Al detectar STOP: `read_block` corta tras copy1 (sin esto, copy2 se
+  cuelga si ya no hay pulsos), `tape_load` restaura (motor off, CINV,
+  timer A) y salta al BREAK del BASIC (`jmp STOP`), volviendo a READY.
+  Verificado: STOP durante carga normal aborta con BREAK; y STOP rescata el
+  cuelgue de "nombre no encontrado" (`LOAD"ZZZ"` escanea, no halla, se
+  cuelga buscando la siguiente cabecera; STOP -> BREAK, nada cargado).
+- **HECHO (refinamiento)**: VERIFY de cinta. `VERIFY"NAME",1` compara la
+  cinta contra memoria y pone ST bit4 ($10) en discrepancia; el comando
+  BASIC muestra "?VERIFY ERROR" si hay diferencia y vuelve a READY si todo
+  coincide. Detalles: el flag KVERCK (load=0 / verify=1) lo pone KLOAD desde
+  A en la entrada de $FFD5; el comando BVERIFY hace `lda #$01` antes del
+  `jsr $FFD5`. La CABECERA se almacena SIEMPRE (KVERCK se guarda en tverify
+  y se limpia al entrar a tape_load; se restaura en tl_match para el bloque
+  de datos), porque si no, la cabecera se compararia contra basura y el
+  nombre/direcciones saldrian mal. En el bloque de datos, bb_data compara
+  (dest) contra el byte decodificado en vez de almacenar, y pone ST bit4 en
+  discrepancia (igual que la ruta serie). El mensaje "VERIFYING" lo elige
+  KLDGMSG segun KVERCK. Verificado KERNAL-level (match: ST=$00, sin escribir
+  memoria; mismatch: ST=$10) y end-to-end via BASIC (mismatch -> "?VERIFY
+  ERROR"; match -> READY sin error).
+- **HECHO (refinamiento)**: fusion byte a byte de las dos copias en LOAD
+  (ver descripcion del decode arriba). Verificado con inyeccion de errores
+  (test_merge_chars: copy1[i]+copy2[j] con i!=j se recupera; mismo byte malo
+  en ambas falla; varios errores por copia en posiciones distintas se
+  recuperan). Sin regresion en VERIFY, STOP ni matching.
+- **LIMITES** (refinables, sobre base que funciona): SAVE de cinta no
+  implementado. VERIFY usa recuperacion a nivel de copia (no aplica la
+  fusion byte a byte; es una comprobacion, no una carga).
+- **HECHO (refinamiento)**: correccion adaptativa de velocidad. El umbral
+  corto/medio/largo se recalcula a partir del pulso corto del leader, que se
+  mide al vuelo (Sest, suavizado (3*Sest+dur)/4) y se congela al primer
+  marcador (pulso >= 1.5*Sest). Los umbrales son TSM=Sest*1.1875 y
+  TML=Sest*1.5625 (puntos medios de las ratios reales medio/corto=1.375 y
+  largo/corto=1.79). La calibracion es EFECTO COLATERAL del decode: los
+  pulsos del leader siguen fluyendo por la maquina de estados (clasificados
+  como cortos, ignorados con state=0); NO se saltan. Saltarlos (jmp setlast)
+  desincronizaba el traspaso header->dato del decode IRQ-continuo y hacia que
+  un do_copy sobre-leyera el bloque siguiente (bug detectado y corregido en
+  esta iteracion). Tolerancia medida ~[-10%, +45%] de desviacion uniforme de
+  velocidad (antes -4%/+8% con umbrales fijos), monotona. Sin regresion en la
+  bateria de cinta ni determinista.
+- **VERIFICADO contra valores reales**: el esquema de codificacion coincide
+  con el formato CBM real (corto/medio/largo = nuevo-dato/marcador, fin de
+  bloque, bits; 8 bits LSB, paridad impar, countdown de sync). Cargan las
+  tres: canonico .TAP (384/528/688 ciclos), PAL (347/504/662) y NTSC
+  (360/524/687). El KERNAL original tambien usa correccion adaptativa.
+- **Traspaso cabecera->datos con leaders cortos (RESUELTO)**: con un leader de
+  datos corto (p.ej. 32/20, que es lo que genera `tape_save` y el codec de
+  pruebas), la copia1 del bloque de datos se consume durante la impresion de
+  FOUND/LOADING; `do_copy` acaba sincronizando con la copia2 (lee los datos
+  bien) y luego, al pedir descartar la copia2 que ya no existe, se quedaba
+  esperando input para siempre (cuelgue). Es decir: el LOAD via BASIC leia los
+  datos correctos pero NO retornaba (BASIC nunca reenlazaba el programa). Se
+  corrigio con un **timeout de inactividad de pulsos en `do_copy`**: el IRQ
+  incrementa `tpulse` ($0384) en cada pulso (en `setlast`); el spin de
+  `dcwait`, en su sondeo throttled (cada 256 vueltas, junto al de STOP),
+  cuenta las vueltas sin pulso nuevo en `tidle` ($03A0) y, si pasa `DCTMO`
+  (~1.6s de silencio), abandona con blkstat=0. Con leaders largos (cintas
+  reales) no se dispara nunca; con leaders cortos, en vez de colgarse, el LOAD
+  retorna (con los datos ya leidos -> exito, y BASIC reenlaza). Bonus:
+  `LOAD"inexistente",1` tambien retorna con error en vez de colgarse. Si en el
+  futuro se soportan cintas reales con huecos entre bloques > ~1.6s habria que
+  subir DCTMO. Validado: test_leader_corto.py (32/20 retorna), test_e2e_basic
+  (reenlace correcto a $080B), sin regresion en merge/STOP/VERIFY/namematch.
+
+### SAVE de cinta: ESCRITURA completa, integrada en KSAVE (HECHO y VERIFICADO)
+
+El espejo del decode de LOAD: la maquina de estados que EMITE los pulsos de un
+bloque CBM completo (2 copias). YA esta conectada: `tape_save` escribe un
+fichero (cabecera + datos) y KSAVE la invoca para dispositivo 1, asi que el
+comando `SAVE"NOMBRE",1` de BASIC funciona. Round-trip validado por el punto de
+entrada oficial KSAVE (`$FFD8`) con el jiffy (timer A) vivo.
+
+- **Diseno (overhead constante)**: la IRQ (`whandler`, convencion CINV) carga
+  en Timer B el pulso ya precomputado, togglea `$01` bit3 (flanco de
+  escritura) y rearma el timer PRIMERO; el avance del estado (`jsr wgen`) va
+  DESPUES. El overhead de la IRQ es asi constante y aditivo (~69 ciclos:
+  S->453, M->597, L->757).
+- **`tape_wblock`** escribe un BLOQUE = copia1 (countdown $89..$81 + datos +
+  checksum) + copia2 (countdown $09..$01 + datos + checksum), ENCADENADAS sin
+  hueco (copia2 arranca tras el marcador de fin de copia1). El llamador deja
+  wptr=inicio (=$C1/KSAVPTR, en pagina cero para `(wptr),y`), wend=fin+1,
+  wlcnt=leader1, wleader2=leader2. Variables de escritura en $0386-$039D; el
+  bloque `wbyteadv`+`wcalcpar` vive reubicado en el hueco $FDA6-$FF5A.
+- **Cada byte**: marcador [L,M] + 8 bits LSB-primero (dipolo por bit) + dipolo
+  de paridad impar. Es el codificador autoconsistente del LOAD, en 6502.
+- **VALIDACIONES**: bloque de 1 copia identico a `cod_copia` (292 pulsos);
+  bloque de 2 copias identico a `cod_bloque` (592 pulsos); ROUND-TRIP
+  SAVE->LOAD (el SAVE de la ROM genera cabecera+datos, los lee el LOAD de la
+  ROM): programa BASIC cargado correcto salvo el byte 0 (el RE-ENLACE de
+  linea de BASIC, $080B recalculado, ortogonal al SAVE); bloque de datos del
+  SAVE byte-identico al codificador. LOAD sin regresion.
+- **Cuatro bugs corregidos**: (1) `(wptr),y` exige pagina cero (wptr a $C1);
+  (2) paridad: no reusar A para el shift del dato y el toggle (contar en Y con
+  `iny`); (3) espacio: el codigo crecio mas alla de `.org $FD15` y los
+  trampolines lo machacaban (reubicar al hueco grande); (4) copia2 no
+  reseteaba wptr (anadido wsptr).
+- **`tape_save`** (`$FE56`, espejo de `tape_load`): escribe el fichero entero.
+  (1) "PRESS RECORD & PLAY ON TAPE" (`MRECORD`) + espera del sense (`$01`
+  bit4=0); (2) "SAVING <nombre>" (`KSAVMSG`); (3) motor on + DESHABILITA el
+  jiffy (`$DC0D=$01`, lee `$DC0D` para limpiar pendientes); (4) guarda el
+  inicio en `tsstart` (`$039E`), porque el bloque de cabecera machaca
+  wptr=`$C1`; (5) construye la cabecera de 21 bytes en `$0362` (libre durante
+  SAVE) [ftype=1, inicio, fin, nombre(16, pad $20)]; (6) bloque cabecera
+  (wptr=`$0362`, wend=`$0377`, leader 40/24); (7) bloque datos (wptr=tsstart,
+  wend=KLDPTR, leader 32/20); (8) motor off + REHABILITA el jiffy
+  (`$DC0D=$81`); (9) `clc/rts`.
+- **Timer A (jiffy)**: `tape_wblock` NO lo toca (solo habilita el timer B).
+  `tape_save` lo deshabilita ANTES de llamar a `tape_wblock` (antes de instalar
+  whandler) y lo rehabilita al final, asi el jiffy no genera pulsos espurios
+  durante la escritura. Confirmado: 0 disparos del jiffy durante la escritura
+  activa.
+- **Integracion en KSAVE** (rama dispositivo < 4, tras montar KSAVPTR=inicio y
+  KLDPTR=fin+1): `cmp #$01 / beq @tape` (dispositivo 1 = cinta) antes del error
+  9; `@tape: jmp tape_save`. El SAVE serie (>=4) intacto.
+- **VALIDACIONES adicionales**: round-trip `tape_save`->LOAD 12/12 bytes
+  (test_tape_save.py); idem con el jiffy disparandose, timer A gestionado
+  (test_tape_save_jiffy.py); round-trip por el punto de entrada KSAVE `$FFD8`
+  con la convencion de registros de BASIC (A=`$2B`, X/Y=VARTAB), retorno sin
+  error, 12/12 bytes (test_ksave.py); y ROUND-TRIP BASIC COMPLETO TECLEADO en
+  dos maquinas (test_basic_rt.py): la maquina A arranca BASIC, teclea un
+  programa y `SAVE"",1` (capturando los pulsos), la maquina B arranca BASIC y
+  teclea `LOAD"",1` alimentandolos; el programa se carga byte-identico, sin
+  error. Esto cubre el camino entero (editor de BASIC, parser de SAVE, KSAVE,
+  tape_save, los pulsos, tape_load, parser de LOAD): ya no queda nada del
+  camino de SAVE sin probar end-to-end.
+
 ---
 
 ## 6. Metodo de verificacion (caja negra contra 1541 real)
