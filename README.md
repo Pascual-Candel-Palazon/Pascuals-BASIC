@@ -46,8 +46,9 @@ an opaque peripheral):
   BASIC `SAVE"NAME",1` command: it writes a header block plus a data block (the
   CBM two-copy format), with motor control, the "PRESS RECORD & PLAY ON TAPE"
   prompt and `SAVING` message, and it disables the jiffy IRQ during the write so
-  the timing stays clean. Verified by a full SAVE-to-LOAD round trip through the
-  KERNAL `SAVE` vector.
+  the timing stays clean. Verified end to end by typing `SAVE"",1` on one
+  machine and `LOAD"",1` on another: the program survives the round trip byte
+  for byte.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
