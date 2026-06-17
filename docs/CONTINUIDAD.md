@@ -306,14 +306,24 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   bloque, bits; 8 bits LSB, paridad impar, countdown de sync). Cargan las
   tres: canonico .TAP (384/528/688 ciclos), PAL (347/504/662) y NTSC
   (360/524/687). El KERNAL original tambien usa correccion adaptativa.
-- **LIMITE conocido (PREEXISTENTE, no de la calibracion)**: con un leader de
-  copy2 muy corto (~20 pulsos, irrealista) el LOAD lee los datos bien pero no
-  retorna limpio a READY (el do_copy de copy2 sobre-lee el fin del stream de
-  flancos). Confirmado IDENTICO con y sin calibracion (a36bdcf). Las cintas
-  CBM reales tienen leaders de cientos/miles de pulsos, asi que no afecta en
-  la practica; test_e2e_run (no canonico) usa ese leader corto y por eso falla
-  en RUN. Endurecer el traspaso de bloques para leaders cortos queda como
-  trabajo separado.
+- **Traspaso cabecera->datos con leaders cortos (RESUELTO)**: con un leader de
+  datos corto (p.ej. 32/20, que es lo que genera `tape_save` y el codec de
+  pruebas), la copia1 del bloque de datos se consume durante la impresion de
+  FOUND/LOADING; `do_copy` acaba sincronizando con la copia2 (lee los datos
+  bien) y luego, al pedir descartar la copia2 que ya no existe, se quedaba
+  esperando input para siempre (cuelgue). Es decir: el LOAD via BASIC leia los
+  datos correctos pero NO retornaba (BASIC nunca reenlazaba el programa). Se
+  corrigio con un **timeout de inactividad de pulsos en `do_copy`**: el IRQ
+  incrementa `tpulse` ($0384) en cada pulso (en `setlast`); el spin de
+  `dcwait`, en su sondeo throttled (cada 256 vueltas, junto al de STOP),
+  cuenta las vueltas sin pulso nuevo en `tidle` ($03A0) y, si pasa `DCTMO`
+  (~1.6s de silencio), abandona con blkstat=0. Con leaders largos (cintas
+  reales) no se dispara nunca; con leaders cortos, en vez de colgarse, el LOAD
+  retorna (con los datos ya leidos -> exito, y BASIC reenlaza). Bonus:
+  `LOAD"inexistente",1` tambien retorna con error en vez de colgarse. Si en el
+  futuro se soportan cintas reales con huecos entre bloques > ~1.6s habria que
+  subir DCTMO. Validado: test_leader_corto.py (32/20 retorna), test_e2e_basic
+  (reenlace correcto a $080B), sin regresion en merge/STOP/VERIFY/namematch.
 
 ### SAVE de cinta: ESCRITURA completa, integrada en KSAVE (HECHO y VERIFICADO)
 

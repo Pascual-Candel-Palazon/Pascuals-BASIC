@@ -38,7 +38,9 @@ an opaque peripheral):
   prefix match; no name loads the first file), the PRESS PLAY ON TAPE /
   FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
   during load (BREAK, back to READY), and VERIFY (`VERIFY"NAME",1` compares
-  the tape against memory and reports `?VERIFY ERROR` on a mismatch).
+  the tape against memory and reports `?VERIFY ERROR` on a mismatch). If the
+  tape stops mid-read (short leaders, an unexpected end, or a file that is not
+  on the tape), the loader times out and returns instead of hanging.
   Adaptive speed correction (the short/medium/long pulse thresholds are
   recentred from the leader's measured short pulse) tolerates roughly -10%
   to +45% tape-speed deviation; the encoding matches the real CBM format and

@@ -2468,6 +2468,10 @@ Sest=$037D          ; estimacion del pulso corto del leader (lo/hi)
 TSM_v=$037F         ; umbral corto/medio calculado (lo/hi)
 TML_v=$0381         ; umbral medio/largo calculado (lo/hi)
 calibr=$0383        ; 1 = midiendo el leader (calibrando velocidad), 0 = congelado
+tpulse=$0384        ; contador de actividad de pulsos (lo incrementa el IRQ en cada pulso)
+tlast=$0385         ; ultimo tpulse visto por do_copy (deteccion de inactividad)
+tidle=$03A0         ; vueltas de inactividad de pulsos en do_copy (lo/hi)
+DCTMO = 512         ; umbral de inactividad (en ticks de 256 vueltas, ~1.6s): el stream paro
 qd=$0384            ; temporal para los calculos de umbral (lo/hi)
 ; --- variables de ESCRITURA de cinta (SAVE) ---
 wst=$0386           ; fase de escritura: 0=leader 1=bytes 2=fin 3=hecho
@@ -2813,17 +2817,42 @@ do_copy:
         sta chk
         sta blkstat
         sta dcstopc
+        sta tidle
+        sta tidle+1         ; reset del contador de inactividad
+        lda tpulse
+        sta tlast           ; snapshot de la actividad de pulsos
         jsr resetblk
 dcwait:
         lda blkstat
         bne dcdone
         dec dcstopc
-        bne dcwait          ; throttle: sondear RUN/STOP cada 256 vueltas
+        bne dcwait          ; throttle: cada 256 vueltas sondear STOP e inactividad
         lda #$7F
         sta $DC00           ; fila 7 del teclado (RUN/STOP)
         lda $DC01
         and #$80            ; bit7 = RUN/STOP
-        bne dcwait          ; no pulsada -> seguir esperando el bloque
+        beq dc_stop         ; pulsada -> abort
+        ; STOP no pulsada: comprobar si siguen llegando pulsos
+        lda tpulse
+        cmp tlast
+        beq dc_idle         ; sin pulso nuevo -> contar inactividad
+        sta tlast           ; hubo pulso -> resetear inactividad
+        lda #$00
+        sta tidle
+        sta tidle+1
+        jmp dcwait
+dc_idle:
+        inc tidle
+        bne dc_idchk
+        inc tidle+1
+dc_idchk:
+        lda tidle
+        cmp #<DCTMO
+        lda tidle+1
+        sbc #>DCTMO
+        bcc dcwait          ; tidle < DCTMO -> seguir esperando el bloque
+        jmp dcdone          ; timeout: el stream paro -> salir (blkstat=0 = fallo)
+dc_stop:
         lda #$80
         sta tstop           ; pulsada -> marcar abort y salir del spin
 dcdone:
@@ -3095,6 +3124,7 @@ setlast:
         sta last_lo
         lda cur_hi
         sta last_hi
+        inc tpulse          ; registrar actividad de pulso (deteccion de fin de stream)
         pla
         tay
         pla
