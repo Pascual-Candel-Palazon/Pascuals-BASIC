@@ -35,6 +35,18 @@ def main():
     K = {'1': (7, 0), '2': (7, 3), '3': (1, 0), '4': (1, 3), '5': (2, 0),
          '6': (2, 3), '7': (3, 0), '8': (3, 3), '9': (4, 0), '0': (4, 3)}
 
+    # Teclas de funcion. F1/F3/F5/F7 directas; SHIFT da F2/F4/F6/F8.
+    FK = {'F1': ((0, 4), 0x85), 'F3': ((0, 5), 0x86),
+          'F5': ((0, 6), 0x87), 'F7': ((0, 3), 0x88)}
+    for nombre, (pos, code) in FK.items():
+        o, _ = emite({pos})
+        ok &= caso(f"{nombre} -> ${code:02X}", o == bytes([code]))
+    FKS = {'F2 (SHIFT+F1)': ((0, 4), 0x89), 'F4 (SHIFT+F3)': ((0, 5), 0x8A),
+           'F6 (SHIFT+F5)': ((0, 6), 0x8B), 'F8 (SHIFT+F7)': ((0, 3), 0x8C)}
+    for nombre, (pos, code) in FKS.items():
+        o, _ = emite({LSH, pos})
+        ok &= caso(f"{nombre} -> ${code:02X}", o == bytes([code]))
+
     # CTRL+1..8 -> codigos de color (negro..amarillo)
     ctrl_col = {'1': 0x90, '2': 0x05, '3': 0x1C, '4': 0x9F,
                 '5': 0x9C, '6': 0x1E, '7': 0x1F, '8': 0x9E}
