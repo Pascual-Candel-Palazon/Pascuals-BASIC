@@ -726,16 +726,20 @@ KEYTABS:
         .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
         .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$03  ; shift+2 = comillas
 
-; tabla CTRL (CTRL+1..8 colores, +9/0 inverso on/off)
+; tabla CTRL. CTRL+1..8 colores, +9/0 inverso, CTRL+letra = codigo de
+; control PETSCII (1..26), mas algunos simbolos. Valores tomados del
+; comportamiento publico documentado (sta.c64.org), no de desensamblado.
+; $00 = sin caracter (lo descarta el escaneo, igual que los huecos $FF
+; del C64 real, que aqui no se pueden usar como centinela).
 KEYTABT:
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $1C,$00,$00,$9F,$00,$00,$00,$00
-        .byte $9C,$00,$00,$1E,$00,$00,$00,$00
-        .byte $1F,$00,$00,$9E,$00,$00,$00,$00
-        .byte $12,$00,$00,$92,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $90,$00,$00,$05,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
+        .byte $1C,$17,$01,$9F,$1A,$13,$05,$00  ; 3 W A 4 Z S E -
+        .byte $9C,$12,$04,$1E,$03,$06,$14,$18  ; 5 R D 6 C F T X
+        .byte $1F,$19,$07,$9E,$02,$08,$15,$16  ; 7 Y G 8 B H U V
+        .byte $12,$09,$0A,$92,$0D,$0B,$0F,$0E  ; 9 I J 0 M K O N
+        .byte $00,$10,$0C,$00,$00,$1B,$00,$00  ; + P L - . : @ ,
+        .byte $1C,$00,$1D,$00,$00,$1F,$1E,$00  ; libra * ; HOME - = flecha /
+        .byte $90,$00,$00,$05,$00,$00,$11,$00  ; 1 <- CTRL 2 SPC C= Q STOP
 ; tabla C= (Commodore+1..8 colores claros)
 KEYTABC:
         .byte $00,$00,$00,$00,$00,$00,$00,$00
