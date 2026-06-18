@@ -48,6 +48,26 @@ def main():
     o, _ = emite({CTRL, K['0']})
     ok &= caso("CTRL+0 -> RVS OFF ($92)", o == b'\x92')
 
+    # CTRL+letra -> codigo de control PETSCII (1..26). (col, bit) de matriz.
+    L = {'A': (1, 2), 'B': (3, 4), 'C': (2, 4), 'D': (2, 2), 'E': (1, 6),
+         'F': (2, 5), 'G': (3, 2), 'H': (3, 5), 'I': (4, 1), 'J': (4, 2),
+         'K': (4, 5), 'L': (5, 2), 'M': (4, 4), 'N': (4, 7), 'O': (4, 6),
+         'P': (5, 1), 'Q': (7, 6), 'R': (2, 1), 'S': (1, 5), 'T': (2, 6),
+         'U': (3, 6), 'V': (3, 7), 'W': (1, 1), 'X': (2, 7), 'Y': (3, 1),
+         'Z': (1, 4)}
+    for i, (letra, pos) in enumerate(sorted(L.items())):
+        code = i + 1                      # A=1, B=2, ... Z=26
+        o, _ = emite({CTRL, pos})
+        ok &= caso(f"CTRL+{letra} -> ${code:02X}", o == bytes([code]))
+
+    # CTRL+simbolo -> resto de codigos de control
+    sym = {": (colon)": ((5, 5), 0x1B), "; (semicolon)": ((6, 2), 0x1D),
+           "libra": ((6, 0), 0x1C), "= (equal)": ((6, 5), 0x1F),
+           "flecha arriba": ((6, 6), 0x1E)}
+    for nombre, (pos, code) in sym.items():
+        o, _ = emite({CTRL, pos})
+        ok &= caso(f"CTRL+{nombre} -> ${code:02X}", o == bytes([code]))
+
     # C=+1..8 -> colores claros (naranja..gris claro)
     cbm_col = {'1': 0x81, '2': 0x95, '3': 0x96, '4': 0x97,
                '5': 0x98, '6': 0x99, '7': 0x9A, '8': 0x9B}
