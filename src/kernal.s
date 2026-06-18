@@ -740,16 +740,18 @@ KEYTABT:
         .byte $00,$10,$0C,$00,$00,$1B,$00,$00  ; + P L - . : @ ,
         .byte $1C,$00,$1D,$00,$00,$1F,$1E,$00  ; libra * ; HOME - = flecha /
         .byte $90,$00,$00,$05,$00,$00,$11,$00  ; 1 <- CTRL 2 SPC C= Q STOP
-; tabla C= (Commodore+1..8 colores claros)
+; tabla C= (Commodore). C=+letra = grafico izquierdo (PETSCII $A1..$BF),
+; C=+1..8 = colores claros, y los simbolos @ + libra emiten su grafico.
+; El resto no emite nada. Fuente: comportamiento publico (sta.c64.org).
 KEYTABC:
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $96,$B3,$B0,$97,$AD,$AE,$B1,$00
-        .byte $98,$B2,$AC,$99,$BC,$BB,$A3,$BD
-        .byte $9A,$B7,$A5,$9B,$BF,$B4,$B8,$BE
-        .byte $00,$A2,$B5,$00,$A7,$A1,$B9,$AA
-        .byte $00,$AF,$B6,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00
-        .byte $81,$00,$00,$95,$00,$00,$AB,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
+        .byte $96,$B3,$B0,$97,$AD,$AE,$B1,$00  ; 3 W A 4 Z S E -
+        .byte $98,$B2,$AC,$99,$BC,$BB,$A3,$BD  ; 5 R D 6 C F T X
+        .byte $9A,$B7,$A5,$9B,$BF,$B4,$B8,$BE  ; 7 Y G 8 B H U V
+        .byte $00,$A2,$B5,$00,$A7,$A1,$B9,$AA  ; 9 I J 0 M K O N
+        .byte $A6,$AF,$B6,$00,$00,$00,$A4,$00  ; + P L - . : @ ,
+        .byte $A8,$00,$00,$00,$00,$00,$00,$00  ; libra * ; HOME - = flecha /
+        .byte $81,$00,$00,$95,$00,$00,$AB,$00  ; 1 <- CTRL 2 SPC C= Q STOP
 
 ; X = indice 0-63 -> A = PETSCII segun modificadores (preserva Y).
 ; Prioridad: CTRL > C= > SHIFT > normal.

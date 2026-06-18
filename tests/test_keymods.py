@@ -75,6 +75,13 @@ def main():
         o, _ = emite({CBM, K[k]})
         ok &= caso(f"C=+{k} -> color ${code:02X}", o == bytes([code]))
 
+    # C=+simbolo -> grafico (los unicos: @ + libra)
+    csym = {"+ (plus)": ((5, 0), 0xA6), "@ (at)": ((5, 6), 0xA4),
+            "libra": ((6, 0), 0xA8)}
+    for nombre, (pos, code) in csym.items():
+        o, _ = emite({CBM, pos})
+        ok &= caso(f"C=+{nombre} -> grafico ${code:02X}", o == bytes([code]))
+
     # SHIFT+C= conmuta el caso (toca $D018) y no emite caracter
     o, mq = emite({LSH, CBM})
     ok &= caso("SHIFT+C= no emite caracter", o == b'')
