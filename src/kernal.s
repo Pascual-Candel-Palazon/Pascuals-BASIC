@@ -36,6 +36,8 @@ KFNADR  = $00BB         ; puntero al nombre (2 bytes)
 KLAT    = $0259         ; tabla de ficheros logicos (10)
 KFAT    = $0263         ; tabla de dispositivos (10)
 KSAT    = $026D         ; tabla de direcciones secundarias (10)
+KTIMOUT = $0285         ; flag de timeout IEEE (mapa C64 publico). Lo pone
+                        ; SETTMO; lo consulta el cartucho IEEE-488, no el bus serie.
 KPNT    = $D1           ; puntero a linea actual de pantalla (lo/hi)
 KCOL    = $D3           ; columna del cursor (0-39)
 KNDX    = $C6           ; numero de teclas en bufer
@@ -1353,6 +1355,11 @@ KREADST:lda KSTATUS
 ; SETMSG ($FF90): A = flags de mensajes del kernal
 KSETMSG:
         sta KMSGFL
+        rts
+; SETTMO ($FFA2): A = flag de timeout IEEE. Solo lo almacena en KTIMOUT;
+; en el C64 de serie lo consulta el cartucho IEEE-488, no el bus serie.
+KSETTMO:
+        sta KTIMOUT
         rts
 ; MEMTOP ($FF99): C=1 leer (X/Y), C=0 fijar
 KMEMTOP:
@@ -3803,7 +3810,7 @@ ts_nmend:
         jmp KMEMTOP     ; $FF99 MEMTOP
         jmp KMEMBOT     ; $FF9C MEMBOT
         jmp KSCNKEY     ; $FF9F SCNKEY
-        jmp KSTUB       ; $FFA2 SETTMO
+        jmp KSETTMO     ; $FFA2 SETTMO
         jmp KACPTR      ; $FFA5 ACPTR
         jmp KCIOUT      ; $FFA8 CIOUT
         jmp KUNTLK      ; $FFAB UNTLK
