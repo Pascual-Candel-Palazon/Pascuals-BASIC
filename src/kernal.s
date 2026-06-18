@@ -706,7 +706,7 @@ KBITS:  .byte $01,$02,$04,$08,$10,$20,$40,$80
 
 ; tabla matriz->PETSCII (sin shift), fila=columna CIA, 8x8
 KEYTAB:
-        .byte $14,$0D,$1D,$00,$00,$00,$00,$11  ; DEL RET -> F7 F1 F3 F5 v
+        .byte $14,$0D,$1D,$88,$85,$86,$87,$11  ; DEL RET csrLR F7 F1 F3 F5 csrUD
         .byte '3','W','A','4','Z','S','E',$00  ; ... LSHIFT
         .byte '5','R','D','6','C','F','T','X'
         .byte '7','Y','G','8','B','H','U','V'
@@ -717,7 +717,7 @@ KEYTAB:
 
 ; tabla con shift
 KEYTABS:
-        .byte $94,$0D,$9D,$00,$00,$00,$00,$91  ; INS RET <-cursor ... ^cursor
+        .byte $94,$0D,$9D,$8C,$89,$8A,$8B,$91  ; INS RET csrLR F8 F2 F4 F6 csrUD
         .byte '#','W'+$80,'A'+$80,'$','Z'+$80,'S'+$80,'E'+$80,$00
         .byte '%','R'+$80,'D'+$80,'&','C'+$80,'F'+$80,'T'+$80,'X'+$80
         .byte $27,'Y'+$80,'G'+$80,'(','B'+$80,'H'+$80,'U'+$80,'V'+$80
