@@ -164,6 +164,14 @@ def main():
     ok &= caso("CLALL retorna", mq.subrutina(0xFFE7, 20000))
     ok &= caso("CLRCHN retorna", mq.subrutina(0xFFCC, 20000))
 
+    # SETTMO ($FFA2): guarda A en el flag de timeout IEEE ($0285), ya no es stub
+    m.a = 0x80
+    ok &= caso("SETTMO retorna", mq.subrutina(0xFFA2, 20000))
+    ok &= caso("SETTMO guarda A ($80) en $0285", mq.mem[0x0285] == 0x80)
+    m.a = 0x00
+    mq.subrutina(0xFFA2, 20000)
+    ok &= caso("SETTMO actualiza $0285 a $00", mq.mem[0x0285] == 0x00)
+
 
     # --- cartucho que arranca por las direcciones INTERNAS documentadas ---
     mq = Maquina(); m = mq.mpu
