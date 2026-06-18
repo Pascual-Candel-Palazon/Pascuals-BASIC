@@ -94,6 +94,13 @@ def main():
         o, _ = emite({CBM, pos})
         ok &= caso(f"C=+{nombre} -> grafico ${code:02X}", o == bytes([code]))
 
+    # SHIFT+RUN/STOP -> autollena "LOAD"+CR+"RUN"+CR (carga de cinta y RUN)
+    o, _ = emite({LSH, (7, 7)})
+    ok &= caso("SHIFT+RUN/STOP -> LOAD+CR+RUN+CR", o == b"LOAD\rRUN\r")
+    # RUN/STOP sin shift sigue dando STOP ($03), no autollena
+    o, _ = emite({(7, 7)})
+    ok &= caso("RUN/STOP solo -> STOP ($03)", o == b"\x03")
+
     # SHIFT+C= conmuta el caso (toca $D018) y no emite caracter
     o, mq = emite({LSH, CBM})
     ok &= caso("SHIFT+C= no emite caracter", o == b'')
