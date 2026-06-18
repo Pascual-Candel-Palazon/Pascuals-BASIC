@@ -624,7 +624,12 @@ KSCNKEY:
         tax
         jsr KXLATE
         beq @restx      ; tecla sin asignar: descartar
-        ldx KTMP2
+        cmp #$83        ; SHIFT+RUN/STOP: autollenar LOAD + RUN
+        bne @srun
+        jsr KSRSTUF
+        ldx KTMP2       ; restaurar columna
+        jmp @next
+@srun:  ldx KTMP2
         sty KTMP2       ; preservar Y
         ; --- registrar la tecla para la repeticion ---
         pha
@@ -724,7 +729,7 @@ KEYTABS:
         .byte ')','I'+$80,'J'+$80,'0','M'+$80,'K'+$80,'O'+$80,'N'+$80
         .byte '+','P'+$80,'L'+$80,'-','>','[','@','<'
         .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
-        .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$03  ; shift+2 = comillas
+        .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$83  ; shift+2=comillas; shift+RUN/STOP=LOAD+RUN
 
 ; tabla CTRL. CTRL+1..8 colores, +9/0 inverso, CTRL+letra = codigo de
 ; control PETSCII (1..26), mas algunos simbolos. Valores tomados del
@@ -777,6 +782,29 @@ KCOLTAB:
         .byte $81,$95,$96,$97,$98,$99,$9A,$9B
 
 KSHIFT  = $02AB
+
+; SHIFT+RUN/STOP: mete "LOAD" + CR + "RUN" + CR en el bufer de teclado,
+; replicando el atajo del C64. El LOAD sin argumentos usa el dispositivo
+; por defecto (1 = datasette), de ahi la carga de cinta; luego RUN. Son
+; 9 bytes, que es lo que cabe en el bufer de 10. Preserva Y (lo usa el
+; bucle de escaneo). Derivado del comportamiento, no de la ROM original.
+KSRSTUF:
+        tya
+        pha
+        ldx #$00
+@cp:    lda KSRTAB,X
+        beq @fin
+        ldy KNDX
+        cpy #10
+        bcs @fin
+        sta KBUF,Y
+        inc KNDX
+        inx
+        bne @cp
+@fin:   pla
+        tay
+        rts
+KSRTAB: .byte "LOAD",$0D,"RUN",$0D,$00
 
 ; ------------------------------------------------------------
 ; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
