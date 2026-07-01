@@ -2079,6 +2079,33 @@ BLOAD:  jsr BPARSE
         bne @lret
         stx VARTAB      ; X/Y = fin+1 devuelto por KLOAD
         sty VARTAB+1
+        ; Guarda: si la carga relocalizada dejo menos de 2 bytes (longitud =
+        ; VARTAB-TXTTAB < 2), el area de programa puede no tener un terminador
+        ; $00 $00 fiable en TXTTAB y LNKPRG/CHEAD recorreria memoria rancia
+        ; (cuelgue al editar la primera linea). En ese caso forzar un programa
+        ; BASIC vacio y bien formado: TXTTAB = $00 $00, VARTAB = TXTTAB+2.
+        sec
+        lda VARTAB
+        sbc TXTTAB
+        tax             ; X = longitud (byte bajo)
+        lda VARTAB+1
+        sbc TXTTAB+1
+        bne @relink     ; longitud >= 256: carga valida
+        cpx #2
+        bcs @relink     ; longitud >= 2: carga valida
+        lda #$00        ; longitud < 2: vaciar de forma limpia
+        ldy #$00
+        sta (TXTTAB),y
+        iny
+        sta (TXTTAB),y
+        lda TXTTAB
+        clc
+        adc #2
+        sta VARTAB
+        lda TXTTAB+1
+        adc #0
+        sta VARTAB+1
+@relink:
         jsr LNKPRG      ; reenlazar los punteros de linea del BASIC
         ; Comportamiento dependiente del modo (interfaz observable, spec
         ; publica del LOAD: nivel B):
