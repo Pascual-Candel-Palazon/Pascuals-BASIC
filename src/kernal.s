@@ -1577,12 +1577,12 @@ KCIOUT: bit KC3PO
 KUNLSN: jsr KISCLR
         lda KSTATUS
         pha             ; preservar el estado real de la transferencia
-        lda #$3F
         sec
         ror KATNF
         jsr KATNLO
         jsr KCLKLO      ; CLOCK asertado durante ATN
         jsr KATNDLY     ; dar tiempo al dispositivo a responder a la re-asercion de ATN
+        lda #$3F        ; recargar aqui: KATNLO/KCLKLO/KATNDLY destruyen A
         jsr KISEND      ; byte de liberacion: su handshake no es fiable ni relevante
         pla
         sta KSTATUS     ; restaurar (el dispositivo libera el bus, no hace ack)
