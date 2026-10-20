@@ -107,7 +107,7 @@ Requirements: `python3`, `cc65`, and `py65` for the tests
 ```
 ./build.sh        # builds into build/ and copies the ROMs to bin/
 cd tests
-./run_all.sh      # full suite: 14 tests (slow under py65, several minutes)
+./run_all.sh      # full suite: 15 tests (slow under py65, several minutes)
 python3 test_humo.py   # or any single test_*.py
 ```
 

@@ -182,6 +182,12 @@ xvfb-run -a x64sc -default \
   vuelven a READY).
 - 20 oct: `bin/` regenerado (estaba parado desde af65a4e) y bit de
   ejecucion restaurado en build.sh y tests/run_all.sh.
+- 20 oct: el buffer de linea del editor (KLINE) pasa de $033C a $0200.
+  En $033C (828, buffer de cinta) cada linea tecleada machacaba las
+  rutinas de usuario (`POKE828,96` + `SYS828` se colgaba). En $0200
+  comparte el BUF del BASIC sin conflicto: INLIN guarda el caracter k en
+  la posicion <= k despues de que el editor lo sirva. Test:
+  tests/test_buffer828.py.
 
 ### IEC: estado por fases
 - **Parsing del BASIC (fases 1, 2a, 3): COMPLETO y verificado.**

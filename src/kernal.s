@@ -1110,7 +1110,14 @@ KCUROFF:
 @no:    pla
         rts
 
-KLINE   = $033C         ; bufer de linea leida (cassette buffer, sin cinta)
+; KLINE: bufer de la linea logica leida de pantalla (hasta 80 bytes).
+; Comparte direccion con el BUF del BASIC ($0200, 81 bytes). Es seguro
+; porque quien consume CHRIN (INLIN del BASIC, o un lector de codigo
+; maquina tipico) guarda el caracter k en la posicion <= k DESPUES de que
+; el editor lo haya servido: nunca pisa algo que quede por leer.
+; Antes estaba en $033C (buffer de cinta, 828): cada linea tecleada
+; machacaba las rutinas de usuario que se cargan ahi (POKE + SYS 828).
+KLINE   = $0200
 KLLEN   = $02EA
 KLPOS   = $02EB
 KLSTART = $02EC

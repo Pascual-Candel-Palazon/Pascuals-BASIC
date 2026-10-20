@@ -88,6 +88,9 @@ A efectos del repo actual cuenta como GAP.
    `SYS828:PRINT"HECHO"` se cuelga (en un C64 real imprime HECHO). SYS 828
    es el sitio clasico para rutinas cortas en codigo maquina. Ademas
    comparte zona con las variables de cinta ($0340-$03A0).
+   RESUELTO el 20 oct: KLINE pasa a $0200 (comparte el BUF del BASIC, que
+   se rellena en el mismo orden en que el editor sirve). Test de
+   regresion: tests/test_buffer828.py (falla con el build anterior).
 
 
 ## Falsas alarmas y ruido de proceso (rendicion de cuentas)
