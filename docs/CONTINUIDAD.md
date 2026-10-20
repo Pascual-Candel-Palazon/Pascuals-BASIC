@@ -4,6 +4,10 @@ Este documento es la **fuente de verdad** para retomar el trabajo en una
 sesion nueva sin contexto previo. Resume estado, arquitectura, metodo y
 lecciones. Leelo entero antes de tocar nada.
 
+Ultima revision: 20 oct 2026 (auditoria completa del repo). Lo que se
+hizo fuera del repo y se perdio esta en la seccion 12; las erratas del
+historial git, en la seccion 13.
+
 ---
 
 ## 1. Que es esto
@@ -135,9 +139,10 @@ xvfb-run -a x64sc -default \
 ## 5. Estado funcional
 
 ### Funciona y verificado
-- Arranque limpio: `**** PASCUAL'S BASIC ****` (centrado, nombre propio en
-  vez de la marca de Commodore; sustituido en translate.py) / `38911 BYTES
-  FREE` / `READY.`
+- Arranque limpio con la disposicion del C64: linea en blanco,
+  `**** PASCUAL'S BASIC ****` (centrado, nombre propio en vez de la marca
+  de Commodore; sustituido en translate.py), linea en blanco,
+  `64K RAM SYSTEM  38911 BASIC BYTES FREE`, `READY.`
 - Mensajes de error LARGOS del BASIC (estilo C64): los 18 errores del MS se
   imprimen completos (`?SYNTAX ERROR`, `?DIVISION BY ZERO ERROR`, `?NEXT
   WITHOUT FOR ERROR IN nn`, etc.) en vez de los codigos de 2 letras del MS.
@@ -161,6 +166,22 @@ xvfb-run -a x64sc -default \
   LOAD encadenado (SA=0 en programa re-ejecuta desde el inicio conservando
   variables) verificados (sec. 9). Variables reservadas `ST`/`TI`/`TI$`
   operativas (ST lee KSTATUS $90; TI/TI$ leen el jiffy del KERNAL $A0).
+
+### Cambios del 18 jun al 3 jul (no recogidos antes en este documento)
+- Teclado: tabla CTRL completa (CTRL+letra emite $01-$1A, CTRL+simbolo el
+  resto), simbolos C=+@/+/libra, F1-F8 ($85-$8C) y SHIFT+RUN/STOP ($83, que
+  mete `LOAD`+CR+`RUN`+CR en el bufer). Fuente: comportamiento publico
+  (sta.c64.org). test_keymods: 64 casos.
+- SETTMO ($FFA2): guarda A en KTIMOUT ($0285); antes era un stub.
+- BLOAD (43f1eba): si una carga relocalizada deja menos de 2 bytes, fuerza
+  un programa vacio ($00 $00) antes de LNKPRG. **Pendiente de validar en
+  VICE** (no se hizo).
+- KUNLSN (b876e1c): el $3F se cargaba antes de KATNLO/KCLKLO/KATNDLY, que
+  destruyen A; ahora se recarga justo antes de KISEND. Verificado en
+  simulacion dual C64+1541 y en VICE (dos `LOAD"$",8` sin disco seguidos
+  vuelven a READY).
+- 20 oct: `bin/` regenerado (estaba parado desde af65a4e) y bit de
+  ejecucion restaurado en build.sh y tests/run_all.sh.
 
 ### IEC: estado por fases
 - **Parsing del BASIC (fases 1, 2a, 3): COMPLETO y verificado.**
@@ -508,6 +529,9 @@ HECHO y VERIFICADO (esta sesion, contra el 1541 real en VICE true-drive):
   linea, conservando variables.
 
 Pendiente:
+0. Antes de seguir con funciones nuevas: recuperar lo perdido (sec. 12),
+   validar en VICE la guarda de BLOAD (43f1eba) y resolver el hueco de ZP
+   de AUDITORIA.md (PEEK(44) da 3, no 8).
 1. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
    descripcion algoritmica publica, NUNCA desensamblados); ROM libre del
    1541 (proyecto hermano).
@@ -608,8 +632,10 @@ src/        kernal.s (sala limpia), translate.py, flatten.py,
 upstream/   m6502.asm (fuente MIT de Microsoft), LICENSE-microsoft
 bin/        basic_c64.bin, kernal_c64.bin (construidas), chargen.bin
 build/      generado por build.sh (gitignored)
-docs/       PROCEDENCIA.md (legal), AUDITORIA.md, CONTINUIDAD.md (este)
+docs/       PROCEDENCIA.md (legal), AUDITORIA.md, CONTINUIDAD.md (este),
+            AUDITORIA_SIMILITUD.md (no-similitud, 20 oct)
 tests/      arnes.py (clase Maquina, py65) + test_*.py + run_all.sh
+tools/      comparador_ciego.py (auditoria de no-similitud; sin ROMs)
 build.sh    construye todo
 ```
 
@@ -630,3 +656,69 @@ es lento; usar ficheros sueltos con `timeout` para regresion rapida.
   autoria de IA). Usar comas, puntos, dos puntos o parentesis.
 - El usuario depura como ingeniero: sus pistas han resuelto varios bugs.
   Ante un fallo no reproducible, pedirle la receta exacta.
+
+---
+
+## 12. Pendiente de recuperar (trabajo hecho fuera del repo y perdido)
+
+Inventario de la auditoria del 20 oct 2026. Se busco en GitHub, en el
+clon local (C:\repo, parado en 4207426) y en Descargas/Escritorio: nada
+de esto existe ya como fichero. Queda el registro de lo que se hizo, que
+permite rehacerlo.
+
+**Junio, cinta (datasette):**
+- Arnes py65 con modelo de Timer B del CIA1 + interrupcion FLAG.
+- Codificador de referencia (`cod_copia`, `cod_bloque`) y la cache de
+  arranque (boot-cache) que evitaba ~158 s de boot por test.
+- Tests: test_leader_corto, test_e2e_basic, test_merge_chars,
+  test_namematch, test_stop_load / notfound, realvals.
+- Consecuencia: el subsistema de cinta (~1000 lineas) no tiene hoy ningun
+  test automatico en el repo.
+
+**Junio y julio, bus IEC:**
+- Arnes VICE true-drive con `testdisk.d64` y la simulacion dual C64+1541
+  usada para KUNLSN. Los tests del repo solo cubren el parsing (fases 1,
+  2a, 3), no el bus.
+
+**Agosto, tier-3 (direcciones canonicas) y layout robusto:**
+- RESET en $FCE2 (arregla SYS 64738), entrada IRQ $FF48, NMI $FE43 con
+  despacho $FE47 (y arreglo del contrato $0318: la ruta NMI consumia 6
+  bytes de pila en vez de 3), BRK $FE66, salida RTI $FEBC, IRQ principal
+  $EA31, salida IRQ $EA81. Para hacer sitio se quito la cinta y se
+  reubicaron KCHRIN ($F44F), KCLKHI ($F621), KTALK/KSECND ($F62A).
+- Deduplicacion KSENDNAME (envio del nombre por el bus comun a OPEN/LOAD/
+  SAVE): 38 bytes.
+- Placement directo de RESTOR/RAMTAS/IOINIT en $FD15/$FD50/$FDA3 (CINT no
+  cabe en su hueco y sigue como trampolin).
+- Layout robusto: 118 directivas .org, una por rutina de entrada, con
+  binario identico al tier-3. Leccion clave: sin anclas, cualquier cambio
+  de tamano desplaza todo hasta el siguiente .org y rompe el BASIC; hay
+  que correr la suite completa, no solo el arranque.
+- Infraestructura: tools/run_gate.sh, tests/test_nmi.py,
+  tests/test_wbytepulse.py, tools/check_reproducible.py,
+  tools/packing_report.py, tools/canonical_kernal.map.
+- Reintroducir la cinta en el tier-3 no cabia sin desplazar codigo
+  (faltaban 617 bytes contiguos; la compresion recupero 291 sin tocar la
+  fusion de copias).
+
+Orden propuesto para rehacer: (1) arnes de cinta + sus tests, para que
+la cinta tenga red antes de moverla; (2) tier-3 con layout robusto desde
+el principio; (3) arnes VICE en el repo, sin incluir la ROM del 1541.
+
+---
+
+## 13. Fe de erratas del historial git
+
+No se reescribe la historia publicada (sin force push). Lo que dicen mal
+algunos commits queda corregido aqui:
+
+| Commit | Dice | Realidad |
+|--------|------|----------|
+| b324db0 | "Update" | Cambio de permisos hecho desde Windows: quito el bit de ejecucion a build.sh y tests/run_all.sh. Corregido el 20 oct. |
+| 020c21c, 97bae4e | "Update README.md" | Editados en la web: anaden la captura de pantalla; el segundo dejo la imagen pegada a "## Status" y rompio el titulo. Corregido el 20 oct. |
+| 9624179 .. b876e1c | (no lo mencionan) | Cambiaron src/kernal.s sin regenerar bin/: las ROMs publicadas quedaron desfasadas hasta el 20 oct. |
+| 43f1eba | "Pendiente de validacion en VICE" | La validacion no se llego a hacer. Sigue pendiente. |
+| b876e1c | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
+| 4207426 | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (60a09ac, af65a4e) con los tres commits hechos en la web; sin conflictos. |
+| rama fix-bload-guard | | Ya fusionada (PR #1). Se puede borrar en GitHub. |
+

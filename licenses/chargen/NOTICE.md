@@ -1,4 +1,4 @@
-# Character generator (`bin/chargen.bin`) — third-party, LGPL-3.0-or-later
+# Character generator (`bin/chargen.bin`): third-party, LGPL-3.0-or-later
 
 `bin/chargen.bin` is NOT part of this project's own (MIT-licensed) code.
 It is included verbatim from the MEGA65 Open ROMs project and is licensed
@@ -15,7 +15,7 @@ separately, under the **GNU Lesser General Public License v3.0 or later**.
 - Copyright Paul Gardner-Stephen, 2019.
 - Copyright Roman Standzikowski (FeralChild64), 2019-2021.
 - PXL font by Retrofan.
-- Source project: MEGA65 Open ROMs — https://github.com/MEGA65/open-roms
+- Source project: MEGA65 Open ROMs, https://github.com/MEGA65/open-roms
 - Licensed under LGPL-3.0-or-later. Full texts in this folder:
   `COPYING.LESSER` (LGPL additional permissions) + `COPYING` (GPL v3).
   Upstream notice: `LICENSE-megabase-notice.txt`.
