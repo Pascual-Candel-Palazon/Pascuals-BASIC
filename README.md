@@ -133,9 +133,12 @@ regression.
   This is the only non-MIT component; details and full license text in
   `licenses/chargen/`. Temporary bridge, pending replacement by an own set.
 
-This project never downloads or disassembles the original ROMs. Any
-non-similarity verification against them should be performed by a third
-party.
+Development never consults disassembled original ROMs. The original
+ROMs that ship with VICE are only used as an opaque emulated peripheral
+(the 1541 drive, to test the IEC bus) and by a blind comparator that
+reports metrics without exposing their content (`tools/comparador_ciego.py`,
+results in `docs/AUDITORIA_SIMILITUD.md`). The formal non-similarity
+verification is left to an independent third party.
 
 ## License
 
