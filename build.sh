@@ -13,5 +13,5 @@ ld65 -C basic.cfg rom.o -o c64_full.bin
 python3 c64_build.py
 cd ..
 cp build/basic_c64.bin build/kernal_c64.bin bin/
-echo "ROMs en bin/ — usar con:"
+echo "ROMs en bin/, usar con:"
 echo "  x64sc -kernal bin/kernal_c64.bin -basic bin/basic_c64.bin -chargen bin/chargen.bin"

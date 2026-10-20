@@ -1,11 +1,14 @@
 ; ============================================================
-;  KERNAL libre v0 para Commodore 64 — sala limpia
+;  KERNAL libre para Commodore 64: sala limpia
 ;  Escrito desde especificacion documentada (tabla de saltos
 ;  estandar $FF81+, registros VIC-II/CIA publicados, matriz de
-;  teclado documentada). Sin codigo derivado de la ROM original.
+;  teclado documentada) y comportamiento observable. Sin codigo
+;  derivado de la ROM original. Politica: docs/PROCEDENCIA.md.
 ;
-;  v0 implementa: RESET, pantalla+scroll, CHROUT, SCNKEY por IRQ,
-;  GETIN, CHRIN (eco), STOP, UDTIM. El resto: stubs.
+;  Implementa: arranque, pantalla y editor WYSIWYG, teclado por
+;  IRQ, vectores de pagina 3, cartuchos CBM80, toda la tabla de
+;  saltos (sin stubs), bus serie IEC y datasette (LOAD/SAVE/VERIFY).
+;  No implementa RS-232 (dispositivo 2).
 ;  Arranca el BASIC (simbolo INIT del modulo BASIC).
 ; ============================================================
 

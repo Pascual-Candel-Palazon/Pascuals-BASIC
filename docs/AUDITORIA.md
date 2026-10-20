@@ -1,4 +1,4 @@
-# AUDITORIA.md — evidencia que respalda cada cambio
+# AUDITORIA.md: evidencia que respalda cada cambio
 
 Este documento clasifica cada delta y subsistema segun el tipo de
 evidencia que lo respalda, sin adornos. Se redacta como rendicion de
@@ -26,7 +26,7 @@ Leyenda:
 | tope del sondeo en $A000 | TEST | "38911 BYTES FREE" exacto. |
 | USRPOK=$0310 | TEST + VICE | test_basic: USR(7)->7. (Antes solo afirmado; ahora probado.) |
 | SYS -> KSYS | VICE + MECH | Borde arcoiris por SYS; KSYS reubicado tras detectar ensamblado fuera de $FFFF. |
-| candado anti-PEEK eliminado | TEST + VICE | test_basic: PEEK($A000)=117 (el candado daba 0). |
+| candado anti-PEEK eliminado | TEST + VICE | test_basic: PEEK($A000) devuelve el byte real de la ROM (el candado daba 0). Era 117 al escribir esta tabla; desde 6332db5 $A000 guarda el vector frio del BASIC y vale 138. El test lee el valor esperado de la propia imagen. |
 | FPWRT JEQ | MECH | Forzado por error real de rango del ensamblador. |
 | fixup DEL en INLIN | **DEAD** | El editor de pantalla consume DEL antes de servir la linea; INLIN ya nunca ve $14. Codigo obsoleto, inofensivo. Candidato a retirar. |
 
@@ -50,6 +50,26 @@ Leyenda:
 | Cartucho CBM80 (reset y NMI) | TEST | Salto por ($8000)/($8002) con firma; arranque normal sin ella. |
 
 
+## Subsistemas posteriores (13 jun a 3 jul), anadidos en la auditoria del 20 oct
+
+Leyenda extra: **PERDIDO** = se verifico con un arnes o test que nunca
+se subio al repo (ver `docs/CONTINUIDAD.md`, "Pendiente de recuperar").
+A efectos del repo actual cuenta como GAP.
+
+| Subsistema | Evidencia | Nota |
+|------------|-----------|------|
+| IEC fase 1 (tablas LAT/FAT/SAT, OPEN/CLOSE/CHKIN/CHKOUT locales) | TEST | test_iec_fase1 (12 casos). |
+| Parsers BASIC de OPEN/CLOSE/LOAD/SAVE, PRINT#/INPUT#/GET#/CMD | TEST | test_iec_fase2a, test_iec_fase3parse. |
+| Bus IEC real (envio, recepcion, EOI, DEVICE NOT PRESENT) | VICE + PERDIDO | Verificado contra el 1541 real en VICE true-drive; el arnes VICE y testdisk.d64 no estan en el repo. |
+| LOAD encadenado (re-RUN SA=0), comodines | VICE + PERDIDO | Igual que el anterior. |
+| Mensajes de error largos (BASIC y E/S) | VICE + TEST parcial | test_iec_fase2a cubre FILE OPEN y TOO MANY FILES. |
+| Cinta: LOAD, matching, mensajes, STOP, VERIFY, fusion de copias, velocidad adaptativa, SAVE, timeout | PERDIDO | Todo verificado con un modelo py65 de Timer B + FLAG y tests (test_leader_corto, test_e2e_basic, test_merge_chars, test_namematch...) que no estan en el repo. Hoy: GAP, unas 1000 lineas sin test automatico. |
+| Tabla CTRL, simbolos C=, F1-F8, SHIFT+RUN/STOP | TEST | test_keymods (64 casos). |
+| SETTMO ($FFA2) | TEST | test_vectores. |
+| Guarda de BLOAD (<2 bytes) | **GAP** | 43f1eba: "pendiente de validacion en VICE". Nunca se cerro. |
+| KUNLSN (recarga de $3F) | VICE + PERDIDO | Verificado en simulacion dual C64+1541 y en VICE; ninguno de los dos arneses esta en el repo. |
+
+
 ## Huecos de compatibilidad encontrados en esta auditoria
 
 1. **Variables ZP en direcciones no estandar.** Al desplazar la pagina
@@ -61,6 +81,13 @@ Leyenda:
    NO RESUELTO.
 
 2. **fixup DEL en INLIN es codigo muerto** (ver arriba).
+
+3. **El editor usa el buffer de cinta ($033C, 828) como buffer de
+   linea** (`KLINE`). Encontrado en la auditoria del 20 oct: cualquier
+   linea tecleada machaca lo que haya en 828+. `POKE828,96` y despues
+   `SYS828:PRINT"HECHO"` se cuelga (en un C64 real imprime HECHO). SYS 828
+   es el sitio clasico para rutinas cortas en codigo maquina. Ademas
+   comparte zona con las variables de cinta ($0340-$03A0).
 
 
 ## Falsas alarmas y ruido de proceso (rendicion de cuentas)
