@@ -138,4 +138,5 @@ python3 tools/comparador_ciego.py --vice RUTA_A_VICE --listado build/rom_listado
    (KISEND destruia Y, carrera de KSTOP, tverify pisado por la cabecera,
    KUNLSN). Es buena evidencia de creacion independiente (regla 3).
 4. **Bug encontrado de paso (compatibilidad, no procedencia).** El editor
-   usa $033C (828) como buffer de linea: ver `AUDITORIA.md`, hueco 3.
+   usaba $033C (828) como buffer de linea: ver `AUDITORIA.md`, hueco 3.
+   Corregido el mismo dia (KLINE a $0200).
