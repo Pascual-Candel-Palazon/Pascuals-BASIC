@@ -6,22 +6,39 @@ auditable provenance chain. The spirit is that of AltirraOS / Altirra
 BASIC in the Atari 8-bit world: a free alternative that boots, programs
 and behaves like the real machine.
 
-<img width="703" height="538" alt="Image" src="https://github.com/user-attachments/assets/1f2fb7c6-2b83-4800-b334-ec5c08372bad" />
+<img width="703" height="538" alt="Pascual's BASIC boot screen" src="https://github.com/user-attachments/assets/1f2fb7c6-2b83-4800-b334-ec5c08372bad" />
+
 ## Status
 
 Working and verified (functionally, in VICE, against a real 1541 used as
 an opaque peripheral):
 
-- Boot: `**** PASCUAL'S BASIC ****` / `38911 BYTES FREE`
+- Boot screen in the C64 layout: `**** PASCUAL'S BASIC ****`, then
+  `64K RAM SYSTEM  38911 BASIC BYTES FREE`, then `READY.`
 - Full interpreter (Microsoft MIT source, v1.1, 1978): floating point,
   strings, FOR/GOSUB, numbered-line programs, RUN, LIST, PEEK/POKE of
   RAM/ROM/I-O, SYS and USR
 - WYSIWYG screen editor: cursor keys, DEL that reflows text, 2-row
   logical lines (80 columns), tolerant of VICE paste
-- Full IRQ keyboard: matrix, shift, key repeat (space, cursors, DEL/INST)
+- Full IRQ keyboard: matrix, shift, key repeat (space, cursors, DEL/INST);
+  CTRL table (CTRL+letter emits PETSCII $01-$1A, CTRL+1..8 colors,
+  CTRL+9/0 reverse on/off), C= graphics (letters and symbols) and light
+  colors, SHIFT+C= case switch, function keys F1-F8, and SHIFT+RUN/STOP
+  (types `LOAD` + `RUN` into the keyboard buffer)
+- Reverse video, upper/lower case sets, 16 text colors, cursor that
+  blinks in the current color
 - Blinking cursor; screen scroll
 - Page-3 RAM vectors: redirectable IRQ/BRK/NMI (`$0314+`), interceptable
   I/O (`$031A-$0333`), RESTOR and VECTOR
+- RUN/STOP breaks a program; RUN/STOP+RESTORE warm-starts to READY with
+  the program intact
+- Cartridges: CBM80 autostart (cold vector at `$8000`, NMI through
+  `$8002`), the init API (CINT/IOINIT/RAMTAS) through the jump table and
+  through the documented internal addresses (`$FF5B`, `$FDA3`, `$FD50`,
+  `$FD15`), and the BASIC cold/warm vectors at `$A000/$A002`
+- Every KERNAL jump-table entry (`$FF81-$FFF3`) is implemented, none is a
+  stub (SETMSG, MEMTOP, MEMBOT, SCREEN, PLOT, IOBASE, SETTIM, RDTIM,
+  SETTMO included). Not implemented: RS-232 (device 2)
 - **Complete IEC serial bus** (verified byte by byte against a real 1541):
   send, receive (with EOI), serial OPEN/CLOSE/CHKIN/CHKOUT, READST,
   LOAD/SAVE/VERIFY, `LOAD"$",8` (directory) + LIST, and reading the
@@ -51,7 +68,9 @@ an opaque peripheral):
   prompt and `SAVING` message, and it disables the jiffy IRQ during the write so
   the timing stays clean. Verified end to end by typing `SAVE"",1` on one
   machine and `LOAD"",1` on another: the program survives the round trip byte
-  for byte.
+  for byte. Note: the tape checks were run with a py65 harness (CIA Timer B
+  and FLAG model) that is not yet in this repository; see
+  `docs/CONTINUIDAD.md`, section "Pendiente de recuperar".
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -86,12 +105,16 @@ Requirements: `python3`, `cc65`, and `py65` for the tests
 (`pip install py65`).
 
 ```
-./build.sh        # produces bin/basic_c64.bin and bin/kernal_c64.bin
+./build.sh        # builds into build/ and copies the ROMs to bin/
 cd tests
-python3 test_humo.py
-python3 test_teclado.py
-python3 test_editor.py
+./run_all.sh      # full suite: 14 tests (slow under py65, several minutes)
+python3 test_humo.py   # or any single test_*.py
 ```
+
+The tests read `build/`, so run `./build.sh` before testing. Some tests
+(`test_color`, `test_editor`, `test_iec_fase2a`) are sensitive to the py65
+cycle budget: if one fails inside a batch, run it alone before assuming a
+regression.
 
 ## Architecture and provenance
 
