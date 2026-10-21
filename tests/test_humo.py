@@ -36,7 +36,8 @@ def test_scroll():
            caso("scroll: ultima fila en blanco", limpia)
 
 def test_transparencia_irq():
-    """Un IRQ no debe alterar registros ni RAM (salvo jiffy y pila)."""
+    """Un IRQ no debe alterar registros ni RAM (salvo jiffy, pila y el estado
+    documentado del teclado: $C5/$CB tecla pulsada, $028D modificadores)."""
     mq = Maquina()
     for _ in range(16999):
         mq.mpu.step()
@@ -53,9 +54,10 @@ def test_transparencia_irq():
     ram1 = bytes(mq.mem[0:0x300])
     difs = [i for i in range(0x300)
             if ram0[i] != ram1[i] and not (0xA0 <= i <= 0xA2)  # jiffy
+            and i not in (0xC5, 0xCB, 0x028D)  # tecla y modificadores (doc.)
             and not (0x0100 <= i <= 0x01FF)]                   # pila
     return caso("IRQ transparente: registros", regs) & \
-           caso("IRQ transparente: RAM (salvo jiffy/pila)", not difs)
+           caso("IRQ transparente: RAM (salvo jiffy/pila/estado de teclado)", not difs)
 
 if __name__ == "__main__":
     ok = test_arranque() & test_scroll() & test_transparencia_irq()

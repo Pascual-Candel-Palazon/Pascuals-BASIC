@@ -182,3 +182,10 @@ Sin cambio material. Las coincidencias nuevas son de 8 bytes en $FD82,
 $FD8B y $FD93 (`tp_blank`, `tp_show`, `tm_off`/`tm_on`): leer, cambiar un
 bit y escribir $D011 (pantalla) o $01 (motor), con su RTS. Lo impone el
 hardware.
+
+## Repeticion tras el editor y $EA7E (21 oct 2026)
+
+Propio vs C64 KERNAL: Jaccard 0,025; 508 bytes (6,6 %) en coincidencias
+de 8 o mas; maximo 54. Sin cambio material. Coincidencia nueva: $EA7E
+(9 B), `LDA $DC0D` seguido de la salida PLA/TAY/PLA/TAX/PLA/RTI. Es la
+direccion canonica y su contrato documentado (reconocer el CIA y salir).

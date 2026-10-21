@@ -13,6 +13,7 @@ la velocidad desviada (-25 % y +40 %) y ruido en los pulsos.
 """
 import sys
 from cinta import Datasette
+from arnes import etiqueta
 import tapgen
 
 def caso(nombre, cond):
@@ -81,8 +82,20 @@ def main():
     d = Datasette()
     d.arrancar()
     d.mq.mem.write(INI, DATOS)
+    # el manejador nunca debe encontrar vacia la cola de pulsos antes del
+    # final: si pasa, el timer repite la mitad anterior y el pulso sale mal
+    vacia, vaciados = etiqueta("wh_vacia"), []
+    paso0 = d.paso
+    def paso():
+        if d.mq.mpu.pc == vacia and d.mq.mem[0x038C] == 0:   # wdone = 0
+            vaciados.append(d.mq.mpu.processorCycles)
+        paso0()
+    d.paso = paso
     r, flancos = d.save(b"PRUEBA", INI, FIN)
+    d.paso = paso0
     ok &= caso("SAVE a cinta termina sin error", r is not None and r['c'] == 0)
+    ok &= caso("SAVE: la cola de pulsos nunca se vacia antes del final",
+               vacia is not None and not vaciados)
 
     iv = intervalos(flancos)
     segs = segmentos(iv)
