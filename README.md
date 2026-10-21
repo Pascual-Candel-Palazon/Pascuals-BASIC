@@ -62,6 +62,10 @@ an opaque peripheral):
     The header block is 192 bytes, with type 1 (relocatable, `SAVE"X",1`)
     or 3 (absolute, `SAVE"X",1,1`). Leaders are $6A00 pulses before the
     header and $1500 before the data.
+  - The whole 192-byte header is kept in the tape buffer at 828-1019
+    ($033C), as on the C64: type at 828, start/end at 829-832, name from
+    833, and any loader code a tape stores in the rest of the header.
+    178/179 point to the buffer.
   - LOAD: filename matching (CBM-style prefix; no name loads the first
     program). Skips data files and stops at an end-of-tape header (type 5).
     A type 3 file always loads at its own address.
