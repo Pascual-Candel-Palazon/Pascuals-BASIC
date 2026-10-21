@@ -285,7 +285,9 @@ KCHROUT:
         lda #$00        ; wrap: la nueva fila es CONTINUACION
         sta KLNKV
         jmp @advrow
-@cr:    lda #$80        ; CR explicito: la nueva fila INICIA linea logica
+@cr:    lda #$00        ; CR apaga el modo inverso (comportamiento documentado)
+        sta KRVS
+        lda #$80        ; CR explicito: la nueva fila INICIA linea logica
         sta KLNKV
 @advrow:
         lda #$00
@@ -2049,7 +2051,12 @@ BVERIFY:jsr BPARSE
 @vok:   lda KSTATUS
         and #$10            ; bit4 = discrepancia
         bne @verr
-        rts
+        bit KMSGFL
+        bpl @vr             ; en programa: sin mensaje
+        lda #<KVOK
+        ldy #>KVOK
+        jmp STROUT          ; modo directo: "OK"
+@vr:    rts
 @verr:  jsr KCLRCHN
         jsr CRDO
         jsr OUTQST          ; "?"
@@ -2057,7 +2064,6 @@ BVERIFY:jsr BPARSE
         ldy #>KVMSG
         jsr STROUT
         jmp TYPERR          ; " ERROR" + linea + READY
-KVMSG:  .byte "VERIFY",0
 
 ; ------------------------------------------------------------
 ; LOAD ($FFD5): A=0 carga / 1 verifica; X/Y = destino si SA=0.
@@ -2396,7 +2402,7 @@ tpulse=$0384        ; contador de actividad de pulsos (lo incrementa el IRQ en c
 tlast=$0385         ; ultimo tpulse visto por do_copy (deteccion de inactividad)
 tidle=$03A0         ; vueltas de inactividad de pulsos en do_copy (lo/hi)
 DCTMO = 512         ; umbral de inactividad (en ticks de 256 vueltas, ~1.6s): el stream paro
-qd=$0384            ; temporal para los calculos de umbral (lo/hi)
+qd=$03A2            ; temporal para los calculos de umbral (lo/hi)
 ; --- variables de ESCRITURA de cinta (SAVE) ---
 wst=$0386           ; fase de escritura: 0=leader 1=bytes 2=fin 3=hecho
 wnext=$0387         ; siguiente pulso precomputado (lo/hi)
@@ -2417,6 +2423,13 @@ wcopy=$0399         ; numero de copia (1 o 2)
 wleader2=$039A      ; pulsos de leader de la copia 2 (lo/hi)
 wsptr=$039C         ; puntero de inicio de datos guardado, para resetear en copia 2 (lo/hi)
 tsstart=$039E       ; inicio guardado por tape_save (el bloque de cabecera machaca KSAVPTR) (lo/hi)
+wpadn=$03A4         ; bytes de relleno ($20) que faltan tras los datos
+wpad0=$03A5         ; relleno de cada copia (cabecera: 192-21; datos: 0)
+wedge=$03A6         ; 0 = la siguiente IRQ es la bajada (mitad), 1 = la subida
+wneed=$03A7         ; el manejador consumio wnext: el bucle debe preparar otro
+wlast=$03A8         ; el pulso en curso es el ultimo del bloque
+calcnt=$03A9        ; pulsos de guia hasta el siguiente recalculo de umbrales
+calok=$03AA         ; ya hay umbrales calculados con esta guia (1) o no (0)
 TSM=456
 TML=608
 
@@ -2453,6 +2466,8 @@ tl_waitp:
         and #$10
         bne tl_waitp        ; bit4=1 -> aun sin pulsar, esperar
 tl_playok:
+        jsr KSRCHMSG        ; "SEARCHING FOR <nombre>" si los mensajes ON
+        jsr tp_blank        ; pantalla apagada: sin lineas malas del VIC
         sei
         lda #<HDLR
         sta $0314
@@ -2499,7 +2514,15 @@ tl_hdrnostop:
         bcs tl_hdrok
         jmp tl_err
 tl_hdrok:
-        lda $0363
+        lda $0362           ; tipo de cabecera
+        cmp #$05
+        bne tl_no5
+        jmp tl_err          ; fin de cinta logico: FILE NOT FOUND
+tl_no5: and #$FD
+        cmp #$01
+        beq tl_prg          ; 1 (reubicable) o 3 (absoluto): programa
+        jmp tl_nextfile     ; otro bloque (fichero de datos): seguir buscando
+tl_prg: lda $0363
         sta startlo
         lda $0364
         sta starthi
@@ -2510,10 +2533,12 @@ tl_hdrok:
         ; --- FOUND <nombre> (en cada cabecera, si mensajes ON) ---
         bit KMSGFL
         bpl tl_nofound
-        lda #<MFOUND
+        jsr tm_off          ; CHROUT corre con IRQ enmascaradas: parar la
+        lda #<MFOUND        ; cinta mientras se escribe para no perder pulsos
         ldy #>MFOUND
         jsr STROUT
         jsr tl_prnam
+        jsr tm_on
 tl_nofound:
         ; --- coincide el nombre pedido? (KFNLEN=0 -> cargar el primero) ---
         lda KFNLEN
@@ -2536,10 +2561,15 @@ tl_skip:
 tl_match:
         lda tverify
         sta KVERCK          ; restaurar VERIFY para el bloque de datos
+        jsr tm_off
         jsr KLDGMSG         ; "LOADING" / "VERIFYING" segun KVERCK (si mensajes ON)
-        ; destino: SA=0 -> KLDPTR ; SA<>0 -> direccion del fichero
+        jsr tm_on
+        ; destino: SA=0 y tipo 1 -> KLDPTR; si no, direccion del fichero
         lda KSA
         bne tl_fileaddr
+        lda $0362
+        cmp #$03
+        beq tl_fileaddr
         lda KLDPTR
         sta dest
         lda KLDPTR+1
@@ -2566,16 +2596,14 @@ tl_setlen:
         lda tstop
         bne tl_break        ; RUN/STOP durante la lectura de datos
         bcc tl_err
+        jsr tl_restore      ; primero parar el IRQ de cinta: usa dlo/dhi
         clc
         lda startlo
         adc maxst
-        sta dlo
+        tax
         lda starthi
         adc maxst+1
-        sta dhi
-        jsr tl_restore
-        ldx dlo
-        ldy dhi
+        tay                 ; X/Y = fin+1
         clc
         rts
 tl_err:
@@ -2601,8 +2629,10 @@ tl_restore:
         lda $01
         ora #$20            ; motor off
         sta $01
+        jsr tp_show
         cli
         rts
+
 
 ; imprime el nombre de 16 chars de la cabecera ($0367) via KCHROUT
 tl_prnam:
@@ -2613,7 +2643,6 @@ tl_pn:  lda $0367,y
         cpy #$10
         bne tl_pn
         rts
-MPLAY:  .byte $0D,"PRESS PLAY ON TAPE",0
 MRECORD:.byte $0D,"PRESS RECORD & PLAY ON TAPE",0
 MFOUND: .byte $0D,"FOUND ",0
 
@@ -2788,6 +2817,9 @@ resetblk:
         sta bstate
         sta syncn
         sta ncopy
+        sta calok           ; sin umbrales de esta guia todavia
+        lda #16
+        sta calcnt
         lda #$01
         sta calibr          ; re-calibrar velocidad con el leader de esta copia
         rts
@@ -2796,228 +2828,240 @@ resetblk:
 ;     de las ratios reales medio/corto=1.375 y largo/corto=1.79) ---
 calc_thresh:
         lda Sest+1
+        lsr a
         sta qd+1
         lda Sest
-        sta qd
-        ldx #$04
-ct_sh:
-        lsr qd+1
-        ror qd
-        dex
-        bne ct_sh           ; qd = Sest>>4
-        lda qd
-        asl a
-        sta TSM_v
-        lda qd+1
-        rol a
-        sta TSM_v+1         ; TSM_v = 2*qd
-        clc
-        lda TSM_v
-        adc qd
-        sta TSM_v
-        lda TSM_v+1
-        adc qd+1
-        sta TSM_v+1         ; TSM_v = 3*qd
-        clc
-        lda TSM_v
-        adc Sest
-        sta TSM_v
-        lda TSM_v+1
-        adc Sest+1
-        sta TSM_v+1         ; TSM_v = Sest + 3*qd  (~1.1875*Sest)
-        lda Sest+1
-        lsr a
-        sta TML_v+1
-        lda Sest
         ror a
-        sta TML_v           ; TML_v = Sest>>1
+        sta qd              ; qd = Sest/2
+        lda qd+1
+        sta cur_hi
+        lda qd
+        lsr cur_hi
+        ror a
+        lsr cur_hi
+        ror a
+        lsr cur_hi
+        ror a
+        sta cur_lo          ; cur = q = Sest/16 (cur es libre fuera del IRQ)
         clc
-        lda TML_v
         adc qd
-        sta TML_v
-        lda TML_v+1
+        tax
+        lda cur_hi
         adc qd+1
-        sta TML_v+1         ; TML_v = (Sest>>1) + qd
+        tay                 ; Y:X = Sest/2 + q
         clc
-        lda TML_v
+        txa
         adc Sest
         sta TML_v
-        lda TML_v+1
+        tya
         adc Sest+1
-        sta TML_v+1         ; TML_v = Sest + (Sest>>1) + qd  (~1.5625*Sest)
+        sta TML_v+1         ; TML = Sest + Sest/2 + q  (1.5625*Sest)
+        lda cur_lo
+        asl a
+        tax
+        lda cur_hi
+        rol a
+        tay                 ; Y:X = 2q
+        clc
+        txa
+        adc cur_lo
+        tax
+        tya
+        adc cur_hi
+        tay                 ; Y:X = 3q
+        clc
+        txa
+        adc Sest
+        sta TSM_v
+        tya
+        adc Sest+1
+        sta TSM_v+1         ; TSM = Sest + 3q  (1.1875*Sest)
         rts
 
 ; ===== pulso -> byte; manejador en convencion CINV (KIRQENT ya salvo A,X,Y) =====
+; Presupuesto: el pulso corto real dura ~376 ciclos y el siguiente FLAG no
+; puede llegar con este manejador aun en curso (se perderia y la medida del
+; pulso siguiente saldria corrida). Camino comun ~200 ciclos con entrada y
+; salida; el trabajo largo (umbrales, fin de byte) cae en pulsos seguidos de
+; uno largo.
 HDLR:
-        lda $DC0D
-rdtb:   lda $DC07
-        sta cur_hi
+        lda $DC0D           ; reconocer FLAG
+rdtb:   ldx $DC07
         lda $DC06
+        cpx $DC07
+        bne rdtb            ; X/A = timer B (alto/bajo) coherentes
         sta cur_lo
-        lda $DC07
-        cmp cur_hi
-        bne rdtb
-        lda primed
-        bne haved
-        lda #$01
-        sta primed
-        jmp setlast
-haved:
-        lda last_lo
+        stx cur_hi
         sec
+        lda last_lo
         sbc cur_lo
         sta dlo
         lda last_hi
         sbc cur_hi
-        sta dhi
-        ; --- correccion de velocidad: calibrar con el pulso corto del leader ---
+        sta dhi             ; d = last - cur (el timer cuenta hacia abajo)
+        lda cur_lo
+        sta last_lo
+        stx last_hi
+        inc tpulse          ; actividad de pulsos (deteccion de fin de stream)
+        lda primed
+        bne haved
+        inc primed          ; primer flanco: solo referencia
+        jmp hd_rti
+haved:
         lda calibr
-        bne docalib
-        jmp doclass         ; calibr=0: clasificar directamente
-docalib:
+        bne hd_cal
+        jmp hd_class
+hd_cal:
+        ; --- calibracion con la guia: solo se mide, no se decodifica.
+        ;     Sest sigue a d (media exponencial 1/4). Tras 16 pulsos
+        ;     seguidos dentro de banda (Sest/2 <= d < 1.5*Sest) se calculan
+        ;     umbrales (calok=1) y el primer pulso >= 1.5*Sest es el
+        ;     marcador que cierra la guia. Fuera de banda antes de eso
+        ;     (ruido al arrancar el motor, vuelta del timer en una pausa)
+        ;     solo reinicia la cuenta: Sest se recupera solo.
+        sec
+        lda dlo
+        sbc Sest
+        sta qd
+        lda dhi
+        sbc Sest+1
+        sta qd+1            ; qd = d - Sest (con signo)
         lda Sest+1
         lsr a
-        sta qd+1
+        sta cur_hi
         lda Sest
         ror a
-        sta qd
-        clc
+        sta cur_lo          ; cur = Sest/2 (cur ya no hace falta)
+        bit qd+1
+        bmi cal_neg
         lda qd
-        adc Sest
-        sta qd
+        cmp cur_lo
         lda qd+1
-        adc Sest+1
-        sta qd+1            ; qd = 1.5*Sest (umbral de fin de leader)
+        sbc cur_hi
+        bcc cal_in          ; d < 1.5*Sest
+        lda calok
+        bne cal_end         ; largo con umbrales listos: fin de la guia
+        beq cal_oob
+cal_neg:
         lda dlo
-        cmp qd
+        cmp cur_lo
         lda dhi
-        sbc qd+1
-        bcs cal_end         ; duracion >= 1.5*Sest -> primer marcador, fin del leader
-        ; pulso de leader (corto): Sest = (3*Sest + duracion)/4
-        lda Sest
-        asl a
-        sta qd
-        lda Sest+1
-        rol a
-        sta qd+1
+        sbc cur_hi
+        bcs cal_in          ; d >= Sest/2
+        lda #$00
+        sta calok           ; basura corta: volver a exigir 16 pulsos
+cal_oob:
+        lda #16
+        sta calcnt
+        ldx #$00
+        beq cal_upd
+cal_in: ldx #$01
+cal_upd:
+        lda qd+1            ; Sest += (d - Sest)/4
+        cmp #$80
+        ror a
+        ror qd
+        cmp #$80
+        ror a
+        ror qd
+        tay
         clc
         lda qd
         adc Sest
-        sta qd
-        lda qd+1
-        adc Sest+1
-        sta qd+1            ; qd = 3*Sest
-        clc
-        lda qd
-        adc dlo
-        sta qd
-        lda qd+1
-        adc dhi
-        sta qd+1            ; qd = 3*Sest + duracion
-        lsr qd+1
-        ror qd
-        lsr qd+1
-        ror qd              ; qd = (3*Sest + duracion)/4
-        lda qd
         sta Sest
-        lda qd+1
+        tya
+        adc Sest+1
         sta Sest+1
-        jmp doclass         ; pulso de leader: medido Y clasificado (corto, state=0 lo ignora)
+        txa
+        beq cal_x           ; fuera de banda: no cuenta
+        dec calcnt
+        bne cal_x
+        lda #16
+        sta calcnt
+        jsr calc_thresh     ; cada 16 pulsos de guia: umbrales al dia (ese
+        lda #$01            ; manejador se alarga, pero en la guia da igual)
+        sta calok
+cal_x:  jmp hd_rti
 cal_end:
-        lda #$00
-        sta calibr
-        jsr calc_thresh     ; congelar: umbrales desde el Sest calibrado
-doclass:
+        lda #$00            ; el marcador se clasifica con los umbrales ya
+        sta calibr          ; calculados: aqui no hay tiempo para recalcular
+hd_class:
+        ; --- clasificar: X = 0 corto, 1 medio, 2 largo ---
+        ldx #$00
         lda dlo
         cmp TSM_v
         lda dhi
         sbc TSM_v+1
-        bcs ge_sm
-        lda #$00
-        sta tcls
-        jmp classified
-ge_sm:
+        bcc hd_cls
+        inx
         lda dlo
         cmp TML_v
         lda dhi
         sbc TML_v+1
-        bcs ge_ml
-        lda #$01
-        sta tcls
-        jmp classified
-ge_ml:
-        lda #$02
-        sta tcls
+        bcc hd_cls
+        inx
+hd_cls:
+        stx tcls
 classified:
-        lda tcls
-        cmp #$02
+        cpx #$02
         bne notlong
-        lda #$02
-        sta p1
+        stx p1              ; largo: primera mitad de un marcador
         lda #$01
         sta phase
-        jmp setlast
+        jmp hd_rti
 notlong:
         lda phase
         bne second
-        lda tcls
-        sta p1
-        lda #$01
-        sta phase
-        jmp setlast
+        stx p1
+        inc phase
+        jmp hd_rti
 second:
         lda #$00
         sta phase
         lda p1
         cmp #$02
         bne notLpair
-        lda tcls
-        cmp #$01
+        cpx #$01
         bne chk_LS
-        lda #$01
+        lda #$01            ; [L,M]: marcador de byte
         sta state
         lda #$00
         sta bitcnt
         sta curbyte
         sta parity
-        jmp setlast
+        jmp hd_rti
 chk_LS:
-        lda tcls
-        cmp #$00
+        cpx #$00
         bne framerr
-        jsr blkend
-        jmp setlast
+        jsr blkend          ; [L,S]: fin de bloque
+        jmp hd_rti
 notLpair:
         lda state
-        beq setlast
+        beq hd_rti
         lda p1
         bne chk_ms
-        lda tcls
-        cmp #$01
+        cpx #$01            ; [S,M] = 0
         bne framerr
         lda #$00
-        jmp gotbit
+        beq gotbit
 chk_ms:
-        lda tcls
-        cmp #$00
+        cpx #$00            ; [M,S] = 1
         bne framerr
         lda #$01
 gotbit:
-        sta bitval
-        lda bitcnt
-        cmp #$08
+        ldy bitcnt
+        cpy #$08
         beq dopar
-        lda bitval
-        lsr a
-        ror curbyte
-        lda parity
-        eor bitval
+        tax
+        eor parity
         sta parity
+        txa
+        lsr a
+        ror curbyte         ; LSB primero
         inc bitcnt
-        jmp setlast
+        jmp hd_rti
 dopar:
-        lda parity
-        eor bitval
+        eor parity
         cmp #$01
         beq okpar
         ; paridad MALA
@@ -3030,7 +3074,7 @@ dopar:
 parbaddrop:
         lda #$00
         sta state
-        jmp setlast
+        jmp hd_rti
 okpar:
         lda #$00
         sta bderr           ; byte con paridad buena
@@ -3038,17 +3082,12 @@ okpar:
         jsr blkbyte
         lda #$00
         sta state
-        jmp setlast
+        jmp hd_rti
 framerr:
         lda #$00
         sta state
         sta phase
-setlast:
-        lda cur_lo
-        sta last_lo
-        lda cur_hi
-        sta last_hi
-        inc tpulse          ; registrar actividad de pulso (deteccion de fin de stream)
+hd_rti:
         pla
         tay
         pla
@@ -3179,17 +3218,21 @@ be_ret:
         rts
 
 ; ============ ESCRITURA DE CINTA (SAVE) ============
-; Genera la secuencia de pulsos del formato CBM por IRQ de Timer B (one-shot).
-; En cada underflow togglea $01 bit3 (un flanco = un pulso, un semiciclo).
-; wnext se precomputa para que el overhead de la IRQ (underflow->recarga TB)
-; sea constante; el avance del estado se hace despues de arrancar el timer.
-; (version inicial: leader + marcador de fin; el encode de bytes va aparte)
-WS = 384                ; pulso corto (ciclos de Timer B)
-WM = 528                ; pulso medio
-WL = 688                ; pulso largo
+; Formato CBM (interfaz publica): cada pulso es un ciclo completo de la
+; linea de escritura ($01 bit3): sube al empezar el pulso y baja a la
+; mitad. El lector mide de flanco a flanco del mismo sentido, asi que la
+; duracion del pulso es la de subida a subida.
+; Timer B en modo continuo: el CIA recarga solo desde el latch en cada
+; underflow, asi que los flancos no dependen de lo que tarde el manejador.
+; El manejador solo cambia la linea y, en la bajada, deja en el latch la
+; mitad del pulso siguiente; el bucle principal precalcula ese pulso.
+WS = 384/2-1            ; pulso corto (latch de medio periodo; periodo = latch+1)
+WM = 528/2-1            ; pulso medio
+WL = 688/2-1            ; pulso largo
 
 tape_wblock:
-        ; el llamador deja wptr=inicio, wend=fin+1, wlcnt=leader1, wleader2=leader2
+        ; el llamador deja wptr=inicio, wend=fin+1, wlcnt=leader1,
+        ; wleader2=leader2, wpad0=bytes de relleno ($20) tras los datos
         lda $0314
         sta tsav            ; guardar CINV
         lda $0315
@@ -3199,8 +3242,12 @@ tape_wblock:
         sta whalf
         sta wdone
         sta wfin
+        sta wlast
         lda #$01
+        sta wedge           ; la primera IRQ da la subida del pulso 0
         sta wcopy           ; empezar por la copia 1
+        lda wpad0
+        sta wpadn
         lda wptr
         sta wsptr
         lda wptr+1
@@ -3210,23 +3257,33 @@ tape_wblock:
         sta $0314
         lda #>whandler
         sta $0315
-        lda #$82
-        sta $DC0D           ; habilitar IRQ de Timer B
+        lda $01
+        and #$F7
+        sta $01             ; linea en bajo antes del primer pulso
         jsr wgen            ; wnext = pulso 0
         lda wnext
         sta $DC06
         lda wnext+1
         sta $DC07
-        lda $01
-        eor #$08
-        sta $01             ; flanco 0
-        lda #$19
-        sta $DC0F           ; force load + start + one-shot
+        lda #$11
+        sta $DC0F           ; force load + start, continuo
+        lda $DC0D           ; limpiar flags pendientes
+        lda #$82
+        sta $DC0D           ; habilitar IRQ de Timer B
         jsr wgen            ; precomputar pulso 1
+        lda #$00
+        sta wneed
         cli
 ws_wait:
         lda wfin
+        bne ws_fin
+        lda wneed
         beq ws_wait
+        lda #$00
+        sta wneed
+        jsr wgen            ; el manejador consumio wnext: preparar el siguiente
+        jmp ws_wait
+ws_fin:
         lda #$02
         sta $DC0D           ; deshabilitar IRQ de Timer B
         lda tsav
@@ -3235,34 +3292,38 @@ ws_wait:
         sta $0315
         rts
 
-; manejador de escritura (CINV; KIRQENT ya apilo A/X/Y)
+; manejador de escritura (CINV; KIRQENT ya apilo A/X/Y). Tiempo constante.
 whandler:
-        lda wfin
-        bne wh_ack
+        lda $DC0D           ; reconocer Timer B
+        lda wedge
+        bne wh_bound
+        lda $01             ; mitad del pulso: bajada
+        and #$F7
+        sta $01
+        inc wedge
         lda wdone
-        bne wh_last
+        bne wh_lastp        ; no hay pulso siguiente: el latch sigue con esta mitad
         lda wnext
         sta $DC06
         lda wnext+1
-        sta $DC07
-        lda $01
-        eor #$08
-        sta $01             ; flanco
-        lda #$19
-        sta $DC0F           ; recargar + arrancar (overhead constante hasta aqui)
-        lda $DC0D           ; ack ICR (HW real)
-        jsr wgen            ; precomputar el siguiente pulso (timer ya corriendo)
+        sta $DC07           ; latch = mitad del pulso siguiente (vale en la subida)
+        inc wneed
         jmp wh_rti
-wh_last:
-        lda $01
-        eor #$08
-        sta $01             ; flanco final: cierra el ultimo pulso
+wh_lastp:
+        sta wlast
+        jmp wh_rti
+wh_bound:
+        lda $01             ; fin del pulso: subida (empieza el siguiente)
+        ora #$08
+        sta $01
+        lda #$00
+        sta wedge
+        lda wlast
+        beq wh_rti
+        lda #$00
+        sta $DC0F           ; era el ultimo: parar el timer
         lda #$01
         sta wfin
-        lda $DC0D
-        jmp wh_rti
-wh_ack:
-        lda $DC0D
 wh_rti:
         pla
         tay
@@ -3313,6 +3374,8 @@ wg_end1:
         sta wptr
         lda wsptr+1
         sta wptr+1          ; resetear puntero de datos al inicio
+        lda wpad0
+        sta wpadn           ; y el relleno
         lda wleader2
         sta wlcnt
         lda wleader2+1
@@ -3323,7 +3386,13 @@ wg_end1:
         rts
 wg_alldone:
         lda #$03
-        sta wst             ; tras este pulso, bloque hecho
+        sta wcopy           ; copia 2 terminada: cola de pulsos cortos
+        lda #78
+        sta wlcnt
+        lda #$00
+        sta wlcnt+1
+        sta wst
+        sta whalf
         rts
 wg_leader:
         lda #<WS
@@ -3338,6 +3407,12 @@ wg_l1:
         lda wlcnt
         ora wlcnt+1
         bne wg_lret
+        lda wcopy
+        cmp #$03
+        bne wg_lbytes
+        sta wst             ; era la cola: tras este pulso, bloque hecho
+        rts
+wg_lbytes:
         lda #$01
         sta wst             ; leader hecho -> fase de bytes
         jsr wstartbytes
@@ -3508,16 +3583,21 @@ wba_loaddata:
         lda wptr+1
         sbc wend+1
         bcc wba_loadbyte
-        jmp wba_tochk
+        lda wpadn
+        beq wba_tochk
+        dec wpadn           ; relleno de la cabecera hasta 192 bytes
+        lda #$20
+        bne wba_putbyte
 wba_loadbyte:
         ldy #$00
         lda (wptr),y
+        inc wptr
+        bne wba_putbyte
+        inc wptr+1
+wba_putbyte:
         sta wcur
         eor wchk
         sta wchk            ; wchk ^= byte
-        inc wptr
-        bne wba_nd
-        inc wptr+1
 wba_nd:
         jsr wcalcpar
         lda #$00
@@ -3557,8 +3637,9 @@ wcp_s:
 ; tape_save: escribe un fichero completo en cinta (bloque cabecera + bloque
 ; datos), espejo de tape_load. Lo llama KSAVE en la rama dispositivo 1.
 ; Entradas (las deja KSAVE): KSAVPTR ($C1/$C2)=inicio, KLDPTR ($AE/$AF)=fin+1,
-;   nombre via SETNAM (KFNLEN, (KFNADR)). ftype fijado a 1 (programa).
-; (Esta version NO controla motor/sense/mensajes; eso va aparte.)
+;   nombre via SETNAM (KFNLEN, (KFNADR)), KSA (tipo de cabecera 1 o 3).
+; Estructura (formato CBM): guia, cabecera de 192 bytes x2, guia, datos x2;
+; cada copia termina con 78 pulsos cortos.
 ; ------------------------------------------------------------
 tape_save:
         ; --- PRESS RECORD & PLAY ON TAPE + esperar sense ($01 bit4) ---
@@ -3576,6 +3657,7 @@ ts_waitp:
         bne ts_waitp        ; esperar a bit4=0
 ts_playok:
         jsr KSAVMSG         ; "SAVING <nombre>" si los mensajes ON
+        jsr tp_blank
         ; motor on + deshabilitar el jiffy (timer A) durante la escritura
         lda $01
         and #$DF
@@ -3588,9 +3670,13 @@ ts_playok:
         sta tsstart
         lda KSAVPTR+1
         sta tsstart+1
-        ; construir la cabecera de 21 bytes en $0362 (libre durante SAVE)
-        lda #$01
-        sta $0362           ; ftype = 1
+        ; construir la cabecera en $0362 (libre durante SAVE): 21 bytes
+        ; reales; el escritor completa hasta 192 con relleno $20
+        lda KSA
+        and #$01
+        asl a
+        ora #$01
+        sta $0362           ; tipo: 1 = reubicable (SA par), 3 = absoluto (SA impar)
         lda tsstart
         sta $0363           ; start lo
         lda tsstart+1
@@ -3614,7 +3700,7 @@ ts_put:
         iny
         jmp ts_nm
 ts_nmend:
-        ; --- escribir bloque de CABECERA (leader 40/24) ---
+        ; --- bloque de CABECERA: guia de $6A00 pulsos (unos 10 s), 79 entre copias ---
         lda #<$0362
         sta wptr
         lda #>$0362
@@ -3623,16 +3709,25 @@ ts_nmend:
         sta wend            ; $0362 + 21 = $0377
         lda #>$0377
         sta wend+1
-        lda #40
+        lda #192-21
+        sta wpad0
+        lda #<$6A00
         sta wlcnt
-        lda #$00
+        lda #>$6A00
         sta wlcnt+1
-        lda #24
+        lda #79
         sta wleader2
         lda #$00
         sta wleader2+1
         jsr tape_wblock
-        ; --- escribir bloque de DATOS (leader 32/20) ---
+        ; pausa de ~0,33 s entre cabecera y datos (linea quieta, motor en marcha)
+        ldy #$00
+        ldx #$00
+ts_pau: dex
+        bne ts_pau
+        dey
+        bne ts_pau
+        ; --- bloque de DATOS: guia de $1500 pulsos (unos 2 s), 79 entre copias ---
         lda tsstart
         sta wptr            ; restaurar el inicio
         lda tsstart+1
@@ -3641,11 +3736,13 @@ ts_nmend:
         sta wend            ; fin+1
         lda KLDPTR+1
         sta wend+1
-        lda #32
-        sta wlcnt
         lda #$00
+        sta wpad0
+        lda #<$1500
+        sta wlcnt
+        lda #>$1500
         sta wlcnt+1
-        lda #20
+        lda #79
         sta wleader2
         lda #$00
         sta wleader2+1
@@ -3656,6 +3753,7 @@ ts_nmend:
         sta $01             ; motor off (bit5=1)
         lda #$81
         sta $DC0D           ; rehabilitar IRQ de timer A
+        jsr tp_show
         clc
         rts
 
@@ -3732,6 +3830,28 @@ KRAMTAS:
         sta KDFLTO      ; salida por defecto = pantalla
         rts
 
+; (rutinas de cinta en el hueco libre de esta isla)
+; Pantalla apagada durante la cinta: las lineas malas del VIC-II paran la
+; CPU unos 40 ciclos y desplazarian los flancos medidos o generados.
+tp_blank:
+        lda $D011
+        and #$EF
+        sta $D011
+        rts
+tp_show:
+        lda $D011
+        ora #$10
+        sta $D011
+        rts
+tm_off: lda $01
+        ora #$20            ; motor parado
+        sta $01
+        rts
+tm_on:  lda $01
+        and #$DF            ; motor en marcha
+        sta $01
+        rts
+
 .org $FDA3
 
 ; ------------------------------------------------------------
@@ -3801,6 +3921,8 @@ KNMIDEF:
         tya
         pha
         jmp KNMI
+; (cadena de cinta en el hueco libre de esta isla)
+MPLAY:  .byte $0D,"PRESS PLAY ON TAPE",0
 ;--- $FE66: BRK por defecto (destino de $0316): arranque en caliente
 .org $FE66
 KBRKDEF:
@@ -3816,6 +3938,8 @@ KRTIX:  pla
 
 .org $E1DE
 KIOM9:  .byte "ILLEGAL DEVICE NUMBER",0
+KVMSG:  .byte "VERIFY",0
+KVOK:   .byte $0D,"OK",0
 
 .org $FEC2
 KERRTAB:

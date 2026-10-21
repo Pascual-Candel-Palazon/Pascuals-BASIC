@@ -5,9 +5,15 @@ $FFD5 los reproduce como eventos FLAG del CIA1. Ademas se corrompen
 pulsos a proposito para probar la fusion de las dos copias del formato
 CBM: un byte malo en una sola copia se recupera; el mismo byte malo en
 las dos no.
+
+Ademas se comprueba el formato desde fuera con tests/tapgen.py (escrito
+aparte del KERNAL, desde el formato publicado): lo que graba SAVE se
+decodifica en Python, y LOAD lee cintas generadas en Python, tambien con
+la velocidad desviada (-25 % y +40 %) y ruido en los pulsos.
 """
 import sys
 from cinta import Datasette
+import tapgen
 
 def caso(nombre, cond):
     print(("OK  " if cond else "FALLO ") + nombre)
@@ -60,12 +66,13 @@ def corromper(iv, inicio_byte):
     iv[p], iv[p + 1] = iv[p + 1], iv[p]
     return iv
 
-def cargar(cinta, nombre=b"PRUEBA", verify=False, preparar=None):
+def cargar(cinta, nombre=b"PRUEBA", verify=False, preparar=None, sa=1,
+           destino=0x0801):
     e = Datasette()
     e.arrancar()
     if preparar:
         preparar(e)
-    r, st = e.load(nombre, cinta, verify=verify)
+    r, st = e.load(nombre, cinta, verify=verify, sa=sa, destino=destino)
     return e, r, st
 
 def main():
@@ -112,6 +119,72 @@ def main():
         e, r, st = cargar(tiempos(ambos))
         ok &= caso("mismo byte malo en las dos copias: no se da por bueno",
                    r is None or r['c'] == 1 or list(e.mq.mem[INI:FIN]) != DATOS)
+
+    # --- formato visto desde fuera (decodificador de tapgen) ---
+    bl = tapgen.decodificar(flancos)
+    ok &= caso("formato: 4 bloques con checksum y marcador de fin",
+               len(bl) == 4 and all(b[2] and b[3] for b in bl))
+    if len(bl) == 4:
+        ok &= caso("formato: guias $6A00 / 79 / >= $1500 / 79",
+                   bl[0][0] >= 0x6A00 and bl[1][0] == 79
+                   and bl[2][0] >= 0x1500 and bl[3][0] == 79)
+        cab = tapgen.cabecera(b"PRUEBA", INI, FIN, tipo=3)
+        ok &= caso("formato: cabecera de 192 bytes (tipo 3 con SA=1, relleno $20)",
+                   bl[0][1][9:-1] == cab and bl[1][1][9:-1] == cab)
+        ok &= caso("formato: cuenta atras $89..$81 y $09..$01",
+                   bl[0][1][:9] == bytes(range(0x89, 0x80, -1))
+                   and bl[1][1][:9] == bytes(range(9, 0, -1)))
+        ok &= caso("formato: bloque de datos = DATOS",
+                   bl[2][1][9:-1] == bytes(DATOS) and bl[3][1][9:-1] == bytes(DATOS))
+    grupos = {'S': [], 'M': [], 'L': []}
+    for x in iv:
+        k = 'S' if x < 456 else 'M' if x < 608 else 'L' if x < 1500 else None
+        if k:
+            grupos[k].append(x)
+    nominal = {'S': tapgen.S, 'M': tapgen.M, 'L': tapgen.L}
+    # media exacta; cada pulso +-8 (un byte de TAP): el flanco sale de una
+    # IRQ y su latencia depende de la instruccion en curso (hasta 7 ciclos)
+    ok &= caso("pulsos S/M/L de 384/528/688 ciclos de subida a subida "
+               "(media +-1,5; cada uno +-8)",
+               all(g and abs(sum(g) / len(g) - nominal[k]) <= 1.5
+                   and max(abs(x - nominal[k]) for x in g) <= 8
+                   for k, g in grupos.items()))
+
+    # --- LOAD de cintas generadas por tapgen ---
+    PROG = bytes((i * 13 + 5) & 0xFF for i in range(100))
+    def prog_ok(e, r, base):
+        return (r is not None and r['c'] == 0
+                and bytes(e.mq.mem[base:base + len(PROG)]) == bytes(PROG)
+                and (r['x'] | r['y'] << 8) == base + len(PROG))
+    gen = tapgen.instantes(tapgen.programa(b"GEN", 0x2000, PROG))
+    e, r, st = cargar(gen, nombre=b"GEN", sa=0, destino=0x3000)
+    ok &= caso("LOAD de cinta generada (tipo 1, SA=0): se reubica al destino",
+               prog_ok(e, r, 0x3000))
+    for vel, txt in ((1.40, "un 40 % rapida"), (0.75, "un 25 % lenta")):
+        gen = tapgen.instantes(tapgen.programa(b"GEN", 0x2000, PROG),
+                               velocidad=vel, jitter=12, semilla=int(vel * 100))
+        e, r, st = cargar(gen, nombre=b"GEN", sa=1)
+        ok &= caso("LOAD de cinta generada " + txt + " con ruido de +-12 ciclos",
+                   prog_ok(e, r, 0x2000))
+    # modo directo (mensajes FOUND/LOADING) y pausa de 0,3 s entre cabecera
+    # y datos, como graba un C64: CHROUT enmascara IRQ y la pausa hace dar
+    # la vuelta al timer; el lector no debe perder la sincronia
+    cab = tapgen.bloque(tapgen.cabecera(b"GEN", 0x2000, 0x2000 + len(PROG)), 0x6A00)
+    dat = tapgen.bloque(PROG, 0x1500)
+    gen = tapgen.instantes(cab + [327685] + dat)
+    e, r, st = cargar(gen, nombre=b"GEN", sa=1,
+                      preparar=lambda m: m.mq.mem.write(0x9D, [0x80]))
+    ok &= caso("LOAD en modo directo con pausa entre cabecera y datos",
+               prog_ok(e, r, 0x2000))
+    gen = tapgen.instantes(tapgen.programa(b"ABS", 0x2000, PROG, tipo=3))
+    e, r, st = cargar(gen, nombre=b"ABS", sa=0, destino=0x3000)
+    ok &= caso("LOAD tipo 3 con SA=0: va a la direccion de la cabecera",
+               prog_ok(e, r, 0x2000))
+    fin_cinta = tapgen.bloque(tapgen.cabecera(b"", 0, 0, tipo=5), 0x6A00)
+    gen = tapgen.instantes(fin_cinta + tapgen.programa(b"GEN", 0x2000, PROG))
+    e, r, st = cargar(gen, nombre=b"GEN", sa=1)
+    ok &= caso("cabecera tipo 5 (fin de cinta): FILE NOT FOUND sin seguir",
+               r is not None and r['c'] == 1 and r['a'] == 4)
 
     # dos ficheros seguidos: LOAD por nombre salta el que no coincide
     d2 = Datasette()

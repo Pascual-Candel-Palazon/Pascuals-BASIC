@@ -78,6 +78,9 @@ A efectos del repo actual cuenta como GAP.
 | SAVE de cinta roto por solape con $FD15 | TEST + MECH | Causa demostrada en el listado (los 3 bytes de wbp_par quedaban como JMP KRESTOR). El build ahora aborta si hay solape. |
 | RAMTAS pisaba $00/$01 | MECH | `95 02` (STA zp,X) en el listado; ahora `9D 02 00`. py65 no modela el puerto, por eso los tests no lo veian. |
 | Direcciones canonicas (tier-3) | TEST | tests/test_canonicas.py: vectores, $0314/$0316/$0318, contrato NMI, $FEBC, cadena $EA31, salida $EA81, BRK, SYS 64738. |
+| Cinta compatible con un C64 real | TEST + VICE | El lector no seguia el pulso corto real (398 ciclos de manejador para 376 de pulso) y el grabador emitia un flanco por pulso. Arreglado y probado en VICE en los dos sentidos contra un C64 de referencia como caja negra; tests/tapgen.py comprueba el formato desde fuera (CONTINUIDAD, seccion 15). |
+| `qd` y `tpulse` en la misma direccion ($0384) | MECH | Equivalencias en src/kernal.s; qd pasa a $03A2. |
+| CR no apagaba el inverso | TEST + VICE | Tras `LOAD"$",8` + LIST todo salia en inverso. tests/test_modes.py. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

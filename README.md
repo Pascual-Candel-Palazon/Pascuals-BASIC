@@ -53,30 +53,30 @@ an opaque peripheral):
 - Filename wildcards (matched by the 1541) and chained LOAD: a `LOAD`
   inside a running program re-runs the loaded program from its first
   line, preserving variables
-- **Datasette (tape) LOAD** (clean-room CBM tape decode, verified end to
-  end: `LOAD"",1` followed by `RUN` loads and runs a program from tape).
-  Reads the CBM block format (sync countdown, per-byte parity, XOR
-  checksum, dual copy with byte-level merge that recovers a block even
-  when each copy has read errors in different bytes). Supports filename
-  matching (`LOAD"NAME",1` scans and skips non-matching files, CBM-style
-  prefix match; no name loads the first file), the PRESS PLAY ON TAPE /
-  FOUND <name> / LOADING messages with a PLAY-sense wait, RUN/STOP abort
-  during load (BREAK, back to READY), and VERIFY (`VERIFY"NAME",1` compares
-  the tape against memory and reports `?VERIFY ERROR` on a mismatch). If the
-  tape stops mid-read (short leaders, an unexpected end, or a file that is not
-  on the tape), the loader times out and returns instead of hanging.
-  Adaptive speed correction (the short/medium/long pulse thresholds are
-  recentred from the leader's measured short pulse) tolerates roughly -10%
-  to +45% tape-speed deviation; the encoding matches the real CBM format and
-  nominal PAL and NTSC tapes load. Tape SAVE is implemented and wired into the
-  BASIC `SAVE"NAME",1` command: it writes a header block plus a data block (the
-  CBM two-copy format), with motor control, the "PRESS RECORD & PLAY ON TAPE"
-  prompt and `SAVING` message, and it disables the jiffy IRQ during the write so
-  the timing stays clean. Verified end to end by typing `SAVE"",1` on one
-  machine and `LOAD"",1` on another: the program survives the round trip byte
-  for byte. Tape is covered by `tests/test_cinta.py`, which runs SAVE,
-  LOAD, VERIFY and the two-copy merge (with deliberately corrupted pulses)
-  through a cycle-level model of CIA1 (`tests/cinta.py`).
+- **Datasette (tape): LOAD, SAVE and VERIFY in the real CBM format.**
+  Checked in VICE against a stock C64 used as a black box: this KERNAL
+  loads tapes recorded by a real C64, and a real C64 loads tapes recorded
+  by this KERNAL (`docs/CONTINUIDAD.md`, section 15).
+  - Format: S/M/L pulses of 384/528/688 cycles (full square-wave cycles),
+    sync countdown, per-byte parity, XOR checksum, two copies per block.
+    The header block is 192 bytes, with type 1 (relocatable, `SAVE"X",1`)
+    or 3 (absolute, `SAVE"X",1,1`). Leaders are $6A00 pulses before the
+    header and $1500 before the data.
+  - LOAD: filename matching (CBM-style prefix; no name loads the first
+    program). Skips data files and stops at an end-of-tape header (type 5).
+    A type 3 file always loads at its own address.
+  - Merge: the two copies are merged byte by byte, so a block survives
+    read errors in different bytes of each copy.
+  - Speed: the loader recalibrates from each leader. In the test harness it
+    reads tapes from 30% slow to 40% fast with +-12 cycles of pulse noise.
+  - Messages: PRESS PLAY / PRESS RECORD & PLAY, SEARCHING, FOUND, LOADING,
+    SAVING, VERIFYING and OK. The screen is blanked while the tape runs, as
+    on the C64.
+  - Also: RUN/STOP abort, and a timeout instead of a hang when the tape ends
+    early.
+  - Tests: `tests/test_cinta.py`, with a cycle-level CIA1 model
+    (`tests/cinta.py`) and an independent Python model of the tape format
+    (`tests/tapgen.py`).
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -113,7 +113,7 @@ Requirements: `python3`, `cc65`, and `py65` for the tests
 ```
 ./build.sh        # builds into build/ and copies the ROMs to bin/
 cd tests
-./run_all.sh      # full suite: 17 tests (slow under py65, several minutes)
+./run_all.sh      # full suite: 17 tests (slow under py65, about 15 minutes)
 python3 test_humo.py   # or any single test_*.py
 ```
 

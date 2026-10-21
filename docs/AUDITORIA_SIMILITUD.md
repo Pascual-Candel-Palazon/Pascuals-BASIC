@@ -166,3 +166,19 @@ direccion canonica y cumplir su contrato:
 
 Bytes iguales en la misma direccion: 2,6 % (antes 2,1 %), por estas
 mismas piezas.
+
+## Repeticion tras rehacer la cinta (21 oct 2026)
+
+Mismo metodo, despues de rehacer el lector y el grabador de cinta (ver
+`docs/CONTINUIDAD.md`, seccion 15):
+
+| Comparacion | Jaccard opcodes | Bytes en coincidencias >=8 | Coincidencia max. |
+|---|---|---|---|
+| **Propio vs C64 KERNAL** | **0,025** | 500 (6,5 %) | 54 |
+| Propio vs VIC-20 KERNAL | 0,012 | 226 (2,9 %) | 26 |
+| Propio vs DOS 1541 (independiente) | 0,005 | 8 (0,1 %) | 8 |
+
+Sin cambio material. Las coincidencias nuevas son de 8 bytes en $FD82,
+$FD8B y $FD93 (`tp_blank`, `tp_show`, `tm_off`/`tm_on`): leer, cambiar un
+bit y escribir $D011 (pantalla) o $01 (motor), con su RTS. Lo impone el
+hardware.

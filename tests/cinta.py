@@ -12,11 +12,48 @@ Modelo (interfaz publica del hardware, nivel A):
 - $01: bit3 = salida de escritura, bit4 = sense (0 = PLAY pulsado),
   bit5 = motor (0 = en marcha).
 
-Grabar: se registran los ciclos de cada cambio del bit3 de $01.
-Reproducir: cada cambio grabado (o cada uno de ellos, segun `cada`) genera
-un evento FLAG en el mismo instante relativo.
+Grabar: se registran los ciclos de cada flanco de subida del bit3 de $01.
+Un pulso de cinta es un ciclo completo de la linea (de subida a subida),
+que es tambien lo que guarda un fichero TAP.
+Reproducir: cada instante de la lista genera un evento FLAG (el lector del
+datasette da un flanco por pulso).
+TAP: `a_tap` y `de_tap` convierten entre la lista de instantes y un fichero
+TAP v1 (un byte = ciclos/8; 0 + 3 bytes para pausas largas).
 """
 from arnes import Maquina, imagen
+
+
+def a_tap(instantes):
+    """Lista de instantes de pulso (ciclos) -> fichero TAP v1."""
+    out = bytearray()
+    for a, b in zip(instantes, instantes[1:]):
+        d = b - a
+        v = (d + 4) // 8
+        if 0 < v < 256:
+            out.append(v)
+        else:
+            out += bytes([0, d & 0xFF, (d >> 8) & 0xFF, (d >> 16) & 0xFF])
+    return b"C64-TAPE-RAW" + bytes([1, 0, 0, 0]) + len(out).to_bytes(4, "little") + out
+
+
+def de_tap(datos):
+    """Fichero TAP (v0 o v1) -> lista de instantes de pulso (ciclos)."""
+    ver, p = datos[12], datos[20:]
+    t, out, i = 0, [0], 0
+    while i < len(p):
+        v = p[i]
+        i += 1
+        if v == 0:
+            if ver >= 1:
+                d = p[i] | p[i + 1] << 8 | p[i + 2] << 16
+                i += 3
+            else:
+                d = 256 * 8
+        else:
+            d = v * 8
+        t += d
+        out.append(t)
+    return out
 
 
 class CIA1:
@@ -45,6 +82,7 @@ class CIA1:
 
     # -- registros --
     def _lat(self, t, v, hi):
+        self.sync()                 # una recarga anterior usa el latch viejo
         if hi:
             self.lat[t] = (self.lat[t] & 0xFF) | (v << 8)
         else:
@@ -121,16 +159,27 @@ class Datasette:
         self.cinta = []            # ciclos relativos de eventos FLAG (reproduccion)
         self.t0 = None             # inicio de la reproduccion
         self.i = 0
+        self.pos = 0
+        self.motor = False
         m = self.mq.mem
         m.subscribe_to_write([0x01], self._w01)
         m.subscribe_to_read([0x01], lambda a: (self.puerto & ~0x10) & 0xFF)
 
     def _w01(self, a, v):
-        if (v ^ self.puerto) & 0x08:
+        if (v & 0x08) and not (self.puerto & 0x08):
             self.flancos.append(self.mq.mpu.processorCycles)
+        ahora = self.mq.mpu.processorCycles
         if (self.puerto & 0x20) and not (v & 0x20) and self.cinta:
-            self.t0 = self.mq.mpu.processorCycles + 2000   # motor en marcha
-            self.i = 0
+            # motor en marcha: la cinta sigue donde se paro (tras 2000
+            # ciclos de arranque)
+            if self.t0 is None:
+                self.t0, self.i = ahora + 2000, 0
+            else:
+                self.t0 = ahora + 2000 - self.pos
+            self.motor = True
+        elif not (self.puerto & 0x20) and (v & 0x20) and self.t0 is not None:
+            self.pos = ahora - self.t0    # motor parado: la cinta se detiene
+            self.motor = False
         self.puerto = v
         return v
 
@@ -140,7 +189,7 @@ class Datasette:
 
     def paso(self):
         m = self.mq.mpu
-        if self.t0 is not None and self.i < len(self.cinta):
+        if self.motor and self.i < len(self.cinta):
             if m.processorCycles >= self.t0 + self.cinta[self.i]:
                 self.cia.sync()
                 self.cia.flag()
