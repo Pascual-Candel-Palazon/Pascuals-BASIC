@@ -511,6 +511,63 @@ if C64:
     # Delta C64: vector USR en el $0310 estandar (POKE 785/786), no en ZP.
     result = result.replace("USRPOK:\tJMP\tFCERR\t;SET UP ORIG BY INIT.",
                             "USRPOK = 784 ;[C64] vector USR en $0310 estandar")
+    # Delta C64: pagina cero del BASIC en las direcciones documentadas del
+    # C64 (mapas de memoria publicos, nivel A/B de docs/PROCEDENCIA.md):
+    # $03 ADRAY1, $05 ADRAY2, $07 CHARAC, $08 ENDCHR, $0B COUNT, $0C DIMFLG,
+    # $0D VALTYP, $0E INTFLG, $0F GARBFL, $10 SUBFLG, $11 INPFLG, $12 TANSGN,
+    # $13 CHANNL, $14 LINNUM ... $2B TXTTAB, $2D VARTAB ... $37 MEMSIZ ...
+    # $73 CHRGET, $7A TXTPTR, $8B RNDX. Desde LINNUM el orden del fuente ya
+    # coincide con el del C64; solo cambia el bloque bajo de banderas:
+    #  - ADRAY1/ADRAY2: vectores documentados (FAC -> entero en A/Y y entero
+    #    en A/Y -> FAC) para rutinas en codigo maquina; INIT los rellena.
+    #  - CNTWFL (^O del fuente) pasa a $09, que en el C64 es un temporal de
+    #    TAB; $0A (VERCK en el C64) queda reservado.
+    #  - LINWID/NCMWID se eliminan: solo INIT los escribia (nadie los lee;
+    #    el "no nulos para CHEAD" era para BUF en pagina cero, y aqui
+    #    BUF=$0200 con BUF-3/BUF-4 puestos a 1 por INIT).
+    def _rep(viejo, nuevo):
+        global result
+        assert result.count(viejo) == 1, viejo
+        result = result.replace(viejo, nuevo)
+    _rep("CHARAC:\t.res 1 ;A DELIMITING CHARACTER.",
+         "ADRAY1:\t.res 2 ;[C64] vector FAC -> entero en A/Y ($03)\n"
+         "ADRAY2:\t.res 2 ;[C64] vector entero en A/Y -> FAC ($05)\n"
+         "CHARAC:\t.res 1 ;A DELIMITING CHARACTER.")
+    _rep("ENDCHR:\t.res 1 ;THE OTHER DELIMITING CHARACTER.",
+         "ENDCHR:\t.res 1 ;THE OTHER DELIMITING CHARACTER.\n"
+         "CNTWFL:\t.res 1 ;[C64] SUPPRESS OUTPUT FLAG ($09)\n"
+         "\t.res 1 ;[C64] $0A reservado (VERCK en el C64)")
+    _rep("CNTWFL:\t.res 1 ;SUPPRESS OUTPUT FLAG.",
+         "\t;[C64] CNTWFL movido a $09")
+    _rep("LINWID:\t.byte LINLEN ;LENGTH OF LINE (WIDTH).\n",
+         "\t;[C64] LINWID eliminado (solo se escribia)\n")
+    _rep("NCMWID:\t.byte NCMPOS ;POSITION BEYOND WHICH THERE ARE\n",
+         "\t;[C64] NCMWID eliminado (solo se escribia)\n")
+    _rep("\tLDAI\tLINLEN\t;THESE MUST BE NON-ZERO SO CHEAD WILL\n"
+         "\tSTA\tLINWID\t;WORK AFTER MOVING A NEW LINE IN BUF\n"
+         "\t\t\t\t;INTO THE PROGRAM\n"
+         "\tLDAI\tNCMPOS\t\n"
+         "\tSTA\tNCMWID\t\n",
+         "\tJSR\tINIADR\t;[C64] vectores ADRAY1/ADRAY2\n")
+    # Las rutinas nuevas van al final del tramo $A000 (la continuacion en
+    # $E000, donde esta INIT, no tiene hueco).
+    _rep("\n.org $E000  ;[C64]",
+         "\n;[C64] destino de ADRAY1: FAC -> entero con signo en A (alto) / Y (bajo)\n"
+         "FACAY:\tJSR\tAYINT\t\n"
+         "\tLDA\tFACMO\t\n"
+         "\tLDY\tFACLO\t\n"
+         "\tRTS\t\n"
+         ";[C64] INIT: vectores ADRAY1/ADRAY2\n"
+         "INIADR:\tLDWDI\tFACAY\t\n"
+         "\tSTWD\tADRAY1\t\n"
+         "\tLDWDI\tGIVAYF\t\n"
+         "\tSTWD\tADRAY2\t\n"
+         "\tRTS\t\n"
+         "\n.org $E000  ;[C64]")
+    # Delta C64: posicion de impresion (POS, TAB, coma) = columna del cursor
+    # del editor ($D3, 211). El 198 del fuente era la del PET; en el C64 es
+    # el contador del bufer de teclado, y POS(0) devolvia 0.
+    _rep("TRMPOS = 198  ", "TRMPOS = 211  ;[C64] columna del cursor ($D3) ")
 # [C64] Banner de arranque: ver la reescritura al estilo C64 al inicio del
 # script (sobre el texto crudo, justo tras leer el fuente). Alli se cambia la
 # marca registrada de Commodore por el nombre propio, se anade la linea en

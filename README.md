@@ -86,6 +86,11 @@ an opaque peripheral):
   quote and insert flags are at 199/212/216. 648 holds the screen page,
   678 the PAL/NTSC flag, and 657 can lock SHIFT+C=. The user areas 251-254
   and 679-767 are left untouched.
+- BASIC zero page at the documented C64 addresses: start of program at
+  43/44, end at 45/46, top of memory at 55/56, CHRGET at $73 and TXTPTR
+  at 122/123, so `POKE 43/44` and CHRGET wedges work. The ADRAY1/ADRAY2
+  conversion vectors are at 3/4 and 5/6. POS, TAB and the comma follow the
+  cursor column (211).
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`

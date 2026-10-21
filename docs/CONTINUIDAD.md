@@ -508,10 +508,10 @@ DATA, espera CLOCK bajo; ack final con DATA bajo.
   Solucion: poner SIEMPRE una linea marcadora despues del comando que
   interesa (`... \n list \n print"fin-marcador" \n`); si aparece el
   marcador, lo de arriba ya se renderizo. No concluir "roto" sin marcador.
-- **ZP del BASIC, NO la del C64 real**: `TXTTAB=$28`(40), `VARTAB=$2A`(42),
-  `ARYTAB=$2C`(44), `STREND=$2E`(46), `FRETOP=$30`(48), `MEMSIZ=$34`(52).
-  Para depurar con PEEK usar PEEK(40/41) y PEEK(42/43), NO PEEK(43)/PEEK(45)
-  (esas son las del C64 de Commodore y aqui dan basura).
+- **ZP del BASIC = la del C64** desde la seccion 17: `TXTTAB=$2B`(43),
+  `VARTAB=$2D`(45), `ARYTAB=$2F`(47), `STREND=$31`(49), `FRETOP=$33`(51),
+  `MEMSIZ=$37`(55), `TXTPTR=$7A`(122). (Antes estaba 3 bytes por debajo:
+  TXTTAB en $28.)
 - **`INPUT#`/`GET#` solo en modo PROGRAMA**: en modo directo dan
   `?ILLEGAL DIRECT`. Para probar el canal de comandos usar un programa
   numerado + RUN, nunca una linea directa.
@@ -558,8 +558,8 @@ HECHO y VERIFICADO (esta sesion, contra el 1541 real en VICE true-drive):
 
 Pendiente:
 0. Antes de seguir con funciones nuevas: recuperar lo perdido (sec. 12),
-   validar en VICE la guarda de BLOAD (43f1eba) y resolver el hueco de ZP
-   de AUDITORIA.md (PEEK(44) da 3, no 8).
+   validar en VICE la guarda de BLOAD (43f1eba). (El hueco de ZP de
+   AUDITORIA.md quedo resuelto en la seccion 17.)
 1. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
    descripcion algoritmica publica, NUNCA desensamblados); ROM libre del
    1541 (proyecto hermano).
@@ -973,6 +973,54 @@ Queda pendiente:
   un programa lo cambia.
 - 650 (repeticion) no se usa.
 - Puntos de entrada internos sin colocar ($E544, $E56C, $E716, $E9FF).
-- La pagina cero del BASIC sigue desplazada (TXTTAB en $28).
+- ~~La pagina cero del BASIC sigue desplazada (TXTTAB en $28).~~ Resuelto en la seccion 17.
 - LIST pone un espacio delante del numero de linea.
 - Diferencias de cinta de la seccion 15.
+
+
+## 17. Pagina cero del BASIC en las direcciones del C64 (21 oct 2026)
+
+La pagina cero del BASIC empezaba en $03 con el orden del fuente MIT, asi
+que TXTTAB caia en $28 y no en $2B: `POKE 43/44` (mover el inicio del
+BASIC), `PEEK(45/46)` (fin del programa), `PEEK(55/56)` (tope de memoria)
+y las cuñas de CHRGET en $73 o TXTPTR en $7A no funcionaban.
+
+Ajuste en src/translate.py (capa de traduccion; el upstream no se toca).
+Direcciones de los mapas de memoria publicos (nivel A/B):
+
+| Direccion | Variable | Nota |
+|---|---|---|
+| $03/$05 | ADRAY1/ADRAY2 | nuevos: vectores FAC -> entero en A/Y (FACAY) y entero en A/Y -> FAC (GIVAYF); INIT los rellena (INIADR) |
+| $07-$08 | CHARAC, ENDCHR | |
+| $09 | CNTWFL | el ^O del fuente; en el C64 es un temporal de TAB |
+| $0A | reservado | VERCK en el C64 |
+| $0B-$13 | COUNT ... CHANNL | mismo orden que el C64 |
+| $14 | LINNUM | desde aqui el orden del fuente ya era el del C64 |
+| $2B..$38 | TXTTAB..MEMSIZ | |
+| $73/$7A | CHRGET/TXTPTR | |
+| $8B-$8F | RNDX | |
+
+- LINWID y NCMWID se eliminan: INIT los escribia y nadie los leia. El
+  comentario "no nulos para CHEAD" era para BUF en pagina cero; aqui
+  BUF=$0200 e INIT pone BUF-3/BUF-4 a 1.
+- FACAY e INIADR van al final del tramo $A000 (la continuacion en $E000,
+  donde esta INIT, no tiene hueco). INIT llama a INIADR en lugar de las
+  escrituras de LINWID/NCMWID (5 bytes menos en $E000). Libres en el tramo
+  $A000: 19 bytes ($BFED-$BFFF).
+- **Fallo encontrado de paso: POS, TAB y la coma.** TRMPOS era 198, la
+  columna del PET; en el C64 es el contador del bufer de teclado. Efecto:
+  `POS(0)` devolvia 0, la coma siempre anadia 10 espacios (Y salia en la
+  columna 11) y `TAB` contaba desde 0 (`PRINT"AB";TAB(5)` dejaba la Z en
+  la 7). Ahora TRMPOS = 211 ($D3), la columna del cursor.
+
+Probado:
+- tests/test_zp_basic.py: 43/44 = 2049, 55/56 = 40960, VARTAB/ARYTAB/
+  STREND/FRETOP coherentes tras un RUN, CHRGET en $73, `POKE44,16:NEW`
+  mueve el programa a $1001, ADRAY1/ADRAY2 desde codigo maquina via USR,
+  POS/coma/TAB.
+- VICE: `PRINT PEEK(43)+256*PEEK(44)` da 2049, 45/46 da 2051, 55/56 da
+  40960; `AB 2`, coma en la columna 10, TAB(5) en la 5. Cinta (grabar,
+  cargar, cargar la grabacion de la ROM original, la ROM original carga
+  la nuestra, VERIFY bien y mal) y disco (SAVE/VERIFY/`LOAD"$"`/LOAD/RUN)
+  siguen bien.
+- Bateria completa en verde (19 tests).

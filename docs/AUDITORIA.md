@@ -86,6 +86,8 @@ A efectos del repo actual cuenta como GAP.
 | Variables documentadas del editor y zonas libres | TEST + VICE | 197/203/214/648/653/657/678; el editor pisaba 251-254 y 679-767. tests/test_variables.py (falla con el build anterior). |
 | Grabador de cinta: wnext leido a medias por el IRQ | VICE + TEST | Pulso de ~90 ciclos en el primer marcador de cada bloque. Cola de 3 pulsos; test de que nunca se vacia. |
 | KSERIN y el IRQ compartian KTMP3 | MECH | Carrera: una tecla durante una lectura del bus podia cambiar el byte leido. |
+| Pagina cero del BASIC en las direcciones del C64 | TEST + VICE | TXTTAB estaba en $28 y no en $2B; POKE 43/44 y PEEK(45/46, 55/56) fallaban. Nuevos ADRAY1/ADRAY2 en $03/$05. tests/test_zp_basic.py. |
+| POS, TAB y la coma usaban el contador del teclado | TEST + VICE | TRMPOS=198 (columna del PET). POS(0) daba 0 y la coma/TAB contaban desde 0. Ahora $D3. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria
@@ -96,7 +98,9 @@ A efectos del repo actual cuenta como GAP.
    `PEEK(44)` devuelve 3, no 8. Los programas que leen/escriben esas
    posiciones documentadas leeran valores incorrectos. Falta un mapa de
    compatibilidad ZP o reubicar variables clave a sus direcciones C64.
-   NO RESUELTO.
+   **RESUELTO** (CONTINUIDAD.md sec. 17): la pagina cero del BASIC usa
+   ahora las direcciones del C64 (TXTTAB en $2B, MEMSIZ en $37, TXTPTR
+   en $7A). tests/test_zp_basic.py.
 
 2. **fixup DEL en INLIN es codigo muerto** (ver arriba).
 
