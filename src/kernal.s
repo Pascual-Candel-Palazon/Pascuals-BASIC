@@ -1260,6 +1260,28 @@ KSETCP: lda KPNT
         sta KCPTR+1
         rts
 
+; rutinas auxiliares de la cinta
+; Pantalla apagada durante la cinta: las lineas malas del VIC-II paran la
+; CPU unos 40 ciclos y desplazarian los flancos medidos o generados.
+tp_blank:
+        lda $D011
+        and #$EF
+        sta $D011
+        rts
+tp_show:
+        lda $D011
+        ora #$10
+        sta $D011
+        rts
+tm_off: lda $01
+        ora #$20            ; motor parado
+        sta $01
+        rts
+tm_on:  lda $01
+        and #$DF            ; motor en marcha
+        sta $01
+        rts
+
 
 
 
@@ -2459,86 +2481,97 @@ KERA28: .byte "FILE DATA",0
 ; --- punteros (direccionamiento indirecto): ZP libre del KERNAL ---
 dest=$A8
 dbase=$AA
-; --- estado en RAM absoluta (buffer de cinta $033C-$03FB) ---
-cur_lo=$0340
-cur_hi=$0341
-last_lo=$0342
-last_hi=$0343
-dlo=$0344
-dhi=$0345
-tcls=$0346
-phase=$0347
-p1=$0348
-state=$0349
-bitcnt=$034A
-curbyte=$034B
-parity=$034C
-bitval=$034D
-primed=$034E
-bstate=$034F
-syncn=$0350
-chk=$0351
-ncopy=$0352
-tstore=$0353
-blkstat=$0354
-dcnt=$0355
-maxst=$0357
-got=$0359
-phase_=$035A
-startlo=$035B
-starthi=$035C
-endlo=$035D
-endhi=$035E
-loaddn=$035F
-ftype=$0360
-bval=$0361
-tsav=$033C
-tstop=$033E         ; bandera de abort por RUN/STOP durante la carga
-dcstopc=$033F       ; contador para throttle del sondeo de STOP
-tverify=$0377       ; VERIFY real guardado (la cabecera se almacena siempre)
-bderr=$0378         ; el byte actual tuvo error de paridad (1) o no (0)
-expchk=$0379        ; checksum esperado del bloque (de una copia con paridad buena)
-expchkok=$037A      ; expchk capturado (1) o no (0)
-mcnt=$037B          ; contador scratch para el re-XOR del bloque fusionado (lo/hi)
-Sest=$037D          ; estimacion del pulso corto del leader (lo/hi)
-TSM_v=$037F         ; umbral corto/medio calculado (lo/hi)
-TML_v=$0381         ; umbral medio/largo calculado (lo/hi)
-calibr=$0383        ; 1 = midiendo el leader (calibrando velocidad), 0 = congelado
-tpulse=$0384        ; contador de actividad de pulsos (lo incrementa el IRQ en cada pulso)
-tlast=$0385         ; ultimo tpulse visto por do_copy (deteccion de inactividad)
-tidle=$03A0         ; vueltas de inactividad de pulsos en do_copy (lo/hi)
+; --- estado de la cinta ---
+; El bufer de cinta ($033C-$03FB, 828-1019) queda entero para la cabecera
+; de 192 bytes, como en el C64: alli la dejan LOAD y SAVE, y alli la leen
+; los cargadores (tipo en 828, inicio 829/830, fin 831/832, nombre desde
+; 833; muchos guardan codigo en el resto de la cabecera).
+; El estado de lectura vive en pagina cero de cinta (lo mas usado por el
+; manejador del IRQ) y al fondo de la pagina 1 ($0100-$0128), lejos de la
+; pila; el de escritura reutiliza las mismas direcciones (LOAD y SAVE no
+; coinciden nunca). CINV se guarda en $0127/$0128 para los dos. (No en
+; 671-672, su sitio en el C64: ahi esta el estado anterior del teclado,
+; KPREV, que el IRQ sigue escribiendo hasta que la cinta para el jiffy.)
+TBUF    = $033C     ; bufer de cinta (828): cabecera
+TBUFN   = TBUF+5    ; nombre de 16 caracteres dentro de la cabecera (833)
+TAPE1   = $B2       ; puntero al bufer de cinta (178/179), documentado
+; - lectura, pagina cero -
+cur_lo=$92
+cur_hi=$96
+last_lo=$97
+last_hi=$9C
+phase=$AD
+p1=$B0
+state=$B1
+bitcnt=$B4
+curbyte=$B5
+parity=$B6
+tpulse=$BD          ; contador de actividad de pulsos (lo incrementa el IRQ en cada pulso)
+calcnt=$BE          ; pulsos de guia hasta el siguiente recalculo de umbrales
+calibr=$BF          ; 1 = midiendo el leader (calibrando velocidad), 0 = congelado
+bstate=$C0
+; - lectura, fondo de la pagina 1 -
+dlo=$0100
+dhi=$0101
+tcls=$0102
+primed=$0103
+syncn=$0104
+chk=$0105
+ncopy=$0106
+tstore=$0107
+blkstat=$0108
+dcnt=$0109          ; (lo/hi)
+maxst=$010B         ; (lo/hi)
+got=$010D
+startlo=$010E
+starthi=$010F
+endlo=$0110
+endhi=$0111
+bval=$0112
+tstop=$0113         ; bandera de abort por RUN/STOP durante la carga
+dcstopc=$0114       ; contador para throttle del sondeo de STOP
+tverify=$0115       ; VERIFY real guardado (la cabecera se almacena siempre)
+bderr=$0116         ; el byte actual tuvo error de paridad (1) o no (0)
+expchk=$0117        ; checksum esperado del bloque (de una copia con paridad buena)
+expchkok=$0118      ; expchk capturado (1) o no (0)
+mcnt=$0119          ; contador scratch para el re-XOR del bloque fusionado (lo/hi)
+Sest=$011B          ; estimacion del pulso corto del leader (lo/hi)
+TSM_v=$011D         ; umbral corto/medio calculado (lo/hi)
+TML_v=$011F         ; umbral medio/largo calculado (lo/hi)
+tlast=$0121         ; ultimo tpulse visto por do_copy (deteccion de inactividad)
+tidle=$0122         ; vueltas de inactividad de pulsos en do_copy (lo/hi)
 DCTMO = 512         ; umbral de inactividad (en ticks de 256 vueltas, ~1.6s): el stream paro
-qd=$03A2            ; temporal para los calculos de umbral (lo/hi)
-; --- variables de ESCRITURA de cinta (SAVE) ---
-wst=$0386           ; fase de escritura: 0=leader 1=bytes 2=fin 3=hecho
-wnext=$0387         ; siguiente pulso precomputado (lo/hi)
-wlcnt=$0389         ; pulsos de leader restantes (lo/hi)
-whalf=$038B         ; mitad del dipolo/marcador (0 o 1)
-wdone=$038C         ; ultimo pulso emitido (1) -> falta el flanco de cierre
-wfin=$038D          ; escritura terminada del todo (1)
-wsym=$038E          ; simbolo dentro del byte: 0=marcador 1..8=bits 9=paridad
-wcur=$038F          ; byte actual en escritura
-wpar=$0390          ; paridad del byte actual (impar)
-wbph=$0391          ; fase del flujo de bytes: 0=countdown 1=datos 2=checksum
-wcdcnt=$0392        ; contador de countdown (9..1)
-wcmask=$0393        ; mascara de copia para el countdown ($80 copia1, $00 copia2)
+qd=$0124            ; temporal para los calculos de umbral (lo/hi)
+calok=$0126         ; ya hay umbrales calculados con esta guia (1) o no (0)
+tsav=$0127          ; CINV guardado durante la cinta (lo/hi; tambien en SAVE)
+; - escritura (SAVE): mismas zonas que la lectura -
+wst=$0100           ; fase de escritura: 0=leader 1=bytes 2=fin 3=hecho
+wnext=$0101         ; siguiente pulso precomputado (lo/hi)
+wlcnt=$0103         ; pulsos de leader restantes (lo/hi)
+whalf=$0105         ; mitad del dipolo/marcador (0 o 1)
+wdone=$0106         ; ultimo pulso emitido (1) -> falta el flanco de cierre
+wfin=$0107          ; escritura terminada del todo (1)
+wsym=$0108          ; simbolo dentro del byte: 0=marcador 1..8=bits 9=paridad
+wcur=$0109          ; byte actual en escritura
+wpar=$010A          ; paridad del byte actual (impar)
+wbph=$010B          ; fase del flujo de bytes: 0=countdown 1=datos 2=checksum
+wcdcnt=$010C        ; contador de countdown (9..1)
+wcmask=$010D        ; mascara de copia para el countdown ($80 copia1, $00 copia2)
 wptr=$C1            ; puntero de datos en pagina cero (=KSAVPTR), para (wptr),y
-wend=$0396          ; fin+1 de datos (lo/hi)
-wchk=$0398          ; checksum acumulado (XOR de datos)
-wcopy=$0399         ; numero de copia (1 o 2)
-wleader2=$039A      ; pulsos de leader de la copia 2 (lo/hi)
-wsptr=$039C         ; puntero de inicio de datos guardado, para resetear en copia 2 (lo/hi)
-tsstart=$039E       ; inicio guardado por tape_save (el bloque de cabecera machaca KSAVPTR) (lo/hi)
-wpadn=$03A4         ; bytes de relleno ($20) que faltan tras los datos
-wpad0=$03A5         ; relleno de cada copia (cabecera: 192-21; datos: 0)
-wedge=$03A6         ; 0 = la siguiente IRQ es la bajada (mitad), 1 = la subida
-wqh=$03A7           ; cola de pulsos: indice de lectura (manejador)
-wqt=$03AB           ; cola de pulsos: indice de escritura (bucle principal)
-wqlo=$03AC          ; cola de pulsos (4 huecos, lo)
-wqhi=$03B0          ; cola de pulsos (4 huecos, hi)
-wlast=$03A8         ; el pulso en curso es el ultimo del bloque
-calcnt=$03A9        ; pulsos de guia hasta el siguiente recalculo de umbrales
-calok=$03AA         ; ya hay umbrales calculados con esta guia (1) o no (0)
+wend=$010E          ; fin+1 de datos (lo/hi)
+wchk=$0110          ; checksum acumulado (XOR de datos)
+wcopy=$0111         ; numero de copia (1 o 2)
+wleader2=$0112      ; pulsos de leader de la copia 2 (lo/hi)
+wsptr=$0114         ; puntero de inicio de datos guardado, para resetear en copia 2 (lo/hi)
+tsstart=$0116       ; inicio guardado por tape_save (el bloque de cabecera machaca KSAVPTR) (lo/hi)
+wpadn=$0118         ; bytes de relleno ($20) que faltan tras los datos
+wpad0=$0119         ; relleno de cada copia (0: la cabecera ya va entera en el bufer)
+wedge=$011A         ; 0 = la siguiente IRQ es la bajada (mitad), 1 = la subida
+wqh=$011B           ; cola de pulsos: indice de lectura (manejador)
+wqt=$011C           ; cola de pulsos: indice de escritura (bucle principal)
+wlast=$011D         ; el pulso en curso es el ultimo del bloque
+wqlo=$011E          ; cola de pulsos (4 huecos, lo)
+wqhi=$0122          ; cola de pulsos (4 huecos, hi)
 TSM=456
 TML=608
 
@@ -2606,13 +2639,13 @@ tl_playok:
         sta blkstat
         cli
 tl_nextfile:
-        ; leer CABECERA en $0362
-        lda #$62
+        ; leer la CABECERA entera (192 bytes) en el bufer de cinta (828)
+        lda #<TBUF
         sta dest
-        lda #$03
+        lda #>TBUF
         sta dest+1
-        lda #21             ; almacenar solo ftype+start+end+nombre (21 bytes)
-        sta maxst           ; el relleno/checksum se lee para el XOR pero no se almacena
+        lda #192
+        sta maxst
         lda #$00
         sta maxst+1
         jsr read_block
@@ -2623,7 +2656,7 @@ tl_hdrnostop:
         bcs tl_hdrok
         jmp tl_err
 tl_hdrok:
-        lda $0362           ; tipo de cabecera
+        lda TBUF            ; tipo de cabecera
         cmp #$05
         bne tl_no5
         jmp tl_err          ; fin de cinta logico: FILE NOT FOUND
@@ -2631,13 +2664,13 @@ tl_no5: and #$FD
         cmp #$01
         beq tl_prg          ; 1 (reubicable) o 3 (absoluto): programa
         jmp tl_nextfile     ; otro bloque (fichero de datos): seguir buscando
-tl_prg: lda $0363
+tl_prg: lda TBUF+1
         sta startlo
-        lda $0364
+        lda TBUF+2
         sta starthi
-        lda $0365
+        lda TBUF+3
         sta endlo
-        lda $0366
+        lda TBUF+4
         sta endhi
         ; --- FOUND <nombre> (en cada cabecera, si mensajes ON) ---
         bit KMSGFL
@@ -2657,7 +2690,7 @@ tl_cmp:
         cpy KFNLEN
         beq tl_match        ; coincidieron todos los bytes pedidos (prefijo, como CBM)
         lda (KFNADR),y
-        cmp $0367,y
+        cmp TBUFN,y
         bne tl_skip
         iny
         bne tl_cmp
@@ -2676,7 +2709,7 @@ tl_match:
         ; destino: SA=0 y tipo 1 -> KLDPTR; si no, direccion del fichero
         lda KSA
         bne tl_fileaddr
-        lda $0362
+        lda TBUF
         cmp #$03
         beq tl_fileaddr
         lda KLDPTR
@@ -2740,10 +2773,10 @@ tl_restore:
         rts
 
 
-; imprime el nombre de 16 chars de la cabecera ($0367) via KCHROUT
+; imprime el nombre de 16 chars de la cabecera (833) via KCHROUT
 tl_prnam:
         ldy #$00
-tl_pn:  lda $0367,y
+tl_pn:  lda TBUFN,y
         jsr KCHROUT
         iny
         cpy #$10
@@ -2754,9 +2787,9 @@ MFOUND: .byte $0D,"FOUND ",0
 
 ; descarta un bloque completo (ambas copias) sin escribir memoria: tstore=0
 skip_block:
-        lda #$62
+        lda #<TBUF
         sta dbase
-        lda #$03
+        lda #>TBUF
         sta dbase+1
         lda #$00
         sta tstore
@@ -3721,46 +3754,40 @@ ts_playok:
         sta tsstart
         lda KSAVPTR+1
         sta tsstart+1
-        ; construir la cabecera en $0362 (libre durante SAVE): 21 bytes
-        ; reales; el escritor completa hasta 192 con relleno $20
+        ; construir la cabecera de 192 bytes en el bufer de cinta (828):
+        ; tipo, inicio, fin+1, nombre de 16 y relleno con espacios
         lda KSA
         and #$01
         asl a
         ora #$01
-        sta $0362           ; tipo: 1 = reubicable (SA par), 3 = absoluto (SA impar)
+        sta TBUF            ; tipo: 1 = reubicable (SA par), 3 = absoluto (SA impar)
         lda tsstart
-        sta $0363           ; start lo
+        sta TBUF+1          ; inicio
         lda tsstart+1
-        sta $0364           ; start hi
+        sta TBUF+2
         lda KLDPTR
-        sta $0365           ; end lo
+        sta TBUF+3          ; fin+1
         lda KLDPTR+1
-        sta $0366           ; end hi
+        sta TBUF+4
         ldy #$00
-ts_nm:
-        cpy #$10
-        bcs ts_nmend        ; y >= 16 -> nombre completo
+ts_nm:  lda #$20
         cpy KFNLEN
-        bcs ts_pad          ; y >= longitud -> rellenar con espacio
+        bcs ts_put          ; pasado el nombre: espacio
         lda (KFNADR),Y
-        jmp ts_put
-ts_pad:
-        lda #$20
-ts_put:
-        sta $0367,Y
+ts_put: sta TBUFN,Y
         iny
-        jmp ts_nm
-ts_nmend:
+        cpy #192-5
+        bcc ts_nm
         ; --- bloque de CABECERA: guia de $6A00 pulsos (unos 10 s), 79 entre copias ---
-        lda #<$0362
+        lda #<TBUF
         sta wptr
-        lda #>$0362
+        lda #>TBUF
         sta wptr+1
-        lda #<$0377
-        sta wend            ; $0362 + 21 = $0377
-        lda #>$0377
+        lda #<(TBUF+192)
+        sta wend
+        lda #>(TBUF+192)
         sta wend+1
-        lda #192-21
+        lda #$00
         sta wpad0
         lda #<$6A00
         sta wlcnt
@@ -3886,29 +3913,11 @@ KRAMTAS:
         sta KMTOP+1
         lda #$03
         sta KDFLTO      ; salida por defecto = pantalla
+        sta $B3         ; TAPE1 (178/179): puntero al bufer de cinta, $033C
+        lda #$3C
+        sta $B2
         rts
 
-; (rutinas de cinta en el hueco libre de esta isla)
-; Pantalla apagada durante la cinta: las lineas malas del VIC-II paran la
-; CPU unos 40 ciclos y desplazarian los flancos medidos o generados.
-tp_blank:
-        lda $D011
-        and #$EF
-        sta $D011
-        rts
-tp_show:
-        lda $D011
-        ora #$10
-        sta $D011
-        rts
-tm_off: lda $01
-        ora #$20            ; motor parado
-        sta $01
-        rts
-tm_on:  lda $01
-        and #$DF            ; motor en marcha
-        sta $01
-        rts
 
 .org $FDA3
 

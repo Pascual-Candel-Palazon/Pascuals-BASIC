@@ -220,3 +220,13 @@ OR $D8, en KSETCP) coincidia en 14 bytes con el original. Se cambio por
 "byte alto - 648 + $D8", que no coincide y ademas sirve para paginas no
 alineadas a 1K. Nueva coincidencia de 8 bytes en KMEMTOP ($EB77):
 `STX/STY $0283/$0284` + RTS, la direccion documentada de MEMTOP.
+
+## Repeticion tras la cabecera de cinta en 828 (21 oct 2026)
+
+Propio vs C64 KERNAL: Jaccard 0,024; 594 bytes (7,7 %) en coincidencias
+de 8 o mas. La coincidencia maxima sube de 54 a 89 bytes, pero no es
+codigo: es KSRTAB en $FC89 ("LOAD", CR, "RUN", CR, el texto que mete
+SHIFT+RUN/STOP, comportamiento documentado) seguido del hueco libre de la
+seccion, relleno con $00. El hueco crecio al pasar el estado de la cinta
+a pagina cero, y la coincidencia crece con el. VIC-20: 0,012 (maximo 89,
+la misma zona). DOS 1541: 0,005.

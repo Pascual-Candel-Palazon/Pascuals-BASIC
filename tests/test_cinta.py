@@ -13,7 +13,7 @@ la velocidad desviada (-25 % y +40 %) y ruido en los pulsos.
 """
 import sys
 from cinta import Datasette
-from arnes import etiqueta
+from arnes import etiqueta, simbolo
 import tapgen
 
 def caso(nombre, cond):
@@ -85,9 +85,10 @@ def main():
     # el manejador nunca debe encontrar vacia la cola de pulsos antes del
     # final: si pasa, el timer repite la mitad anterior y el pulso sale mal
     vacia, vaciados = etiqueta("wh_vacia"), []
+    WDONE = simbolo("wdone")
     paso0 = d.paso
     def paso():
-        if d.mq.mpu.pc == vacia and d.mq.mem[0x038C] == 0:   # wdone = 0
+        if d.mq.mpu.pc == vacia and d.mq.mem[WDONE] == 0:
             vaciados.append(d.mq.mpu.processorCycles)
         paso0()
     d.paso = paso
@@ -96,6 +97,15 @@ def main():
     ok &= caso("SAVE a cinta termina sin error", r is not None and r['c'] == 0)
     ok &= caso("SAVE: la cola de pulsos nunca se vacia antes del final",
                vacia is not None and not vaciados)
+    TBUF = 0x033C
+    CAB = tapgen.cabecera(b"PRUEBA", INI, FIN, tipo=3)
+    ok &= caso("SAVE: la cabecera de 192 bytes queda en el bufer de 828",
+               bytes(d.mq.mem[TBUF:TBUF + 192]) == CAB)
+    blq = tapgen.decodificar(flancos)
+    ok &= caso("SAVE: la cabecera grabada es la del bufer",
+               bool(blq) and blq[0][1][9:9 + 192] == CAB)
+    ok &= caso("TAPE1 (178/179) apunta al bufer de cinta ($033C)",
+               d.mq.mem[0xB2] | d.mq.mem[0xB3] << 8 == TBUF)
 
     iv = intervalos(flancos)
     segs = segmentos(iv)
@@ -105,6 +115,9 @@ def main():
     ok &= caso("LOAD por nombre devuelve sin error", r is not None and r['c'] == 0)
     ok &= caso("LOAD: datos identicos", list(e.mq.mem[INI:FIN]) == DATOS)
     ok &= caso("LOAD: X/Y = fin+1", r is not None and (r['x'] | r['y'] << 8) == FIN)
+    ok &= caso("LOAD: la cabecera queda en 828 (tipo 3, nombre en 833)",
+               bytes(e.mq.mem[TBUF:TBUF + 192]) == CAB and
+               e.mq.mem[TBUF] == 3 and bytes(e.mq.mem[TBUF + 5:TBUF + 11]) == b"PRUEBA")
 
     e, r, st = cargar(flancos, verify=True,
                       preparar=lambda m: m.mq.mem.write(INI, DATOS))
@@ -193,6 +206,14 @@ def main():
     e, r, st = cargar(gen, nombre=b"ABS", sa=0, destino=0x3000)
     ok &= caso("LOAD tipo 3 con SA=0: va a la direccion de la cabecera",
                prog_ok(e, r, 0x2000))
+    # cabecera con codigo en los bytes 21-191 (lo hacen muchos cargadores):
+    # tiene que llegar entera a 828
+    extra = bytes((i * 7 + 3) & 0xFF for i in range(171))
+    cab_x = tapgen.cabecera(b"GEN", 0x2000, 0x2000 + len(PROG))[:21] + extra
+    gen = tapgen.instantes(tapgen.bloque(cab_x, 0x6A00) + tapgen.bloque(PROG, 0x1500))
+    e, r, st = cargar(gen, nombre=b"GEN", sa=1)
+    ok &= caso("LOAD: los 192 bytes de la cabecera (codigo incluido) en 828-1019",
+               prog_ok(e, r, 0x2000) and bytes(e.mq.mem[0x033C:0x03FC]) == cab_x)
     fin_cinta = tapgen.bloque(tapgen.cabecera(b"", 0, 0, tipo=5), 0x6A00)
     gen = tapgen.instantes(fin_cinta + tapgen.programa(b"GEN", 0x2000, PROG))
     e, r, st = cargar(gen, nombre=b"GEN", sa=1)

@@ -37,6 +37,19 @@ def etiqueta(nombre):
             return int(m.group(1), 16)
     return None
 
+def simbolo(nombre):
+    """Valor de una constante del kernal (nombre = $XXXX) segun el listado."""
+    lst = os.path.join(RAIZ, "build", "rom_listado.txt")
+    if not os.path.exists(lst):
+        return None
+    pat = re.compile(r"^00[0-9A-F]{4}\s+\d\s+(?:[0-9A-F]{2} ?)*\s*"
+                     + re.escape(nombre) + r"\s*=\s*\$([0-9A-Fa-f]+)")
+    for ln in open(lst):
+        m = pat.match(ln)
+        if m:
+            return int(m.group(1), 16)
+    return None
+
 class Maquina:
     def __init__(self, teclas_matriz=None):
         """teclas_matriz: conjunto mutable de (fila, bit) pulsadas."""

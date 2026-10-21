@@ -885,7 +885,7 @@ Tests:
   latch del timer y modela parar y arrancar el motor.
 
 Diferencias que quedan respecto al C64:
-- La cabecera se guarda en $0362, no en $033C.
+- ~~La cabecera se guarda en $0362, no en $033C.~~ Resuelto en la seccion 21.
 - No hay ficheros de datos en cinta (OPEN 1,1).
 - ~~LIST de BASIC deja un espacio antes del numero de linea (" 10 PRINT")
   donde el C64 no lo deja.~~ Resuelto en la seccion 18.
@@ -1164,3 +1164,52 @@ memoria (`10 PRINT"VIEJO"`, `20 GOTO 10`) y la 1541:
 
 Probado: bateria completa en verde (24 tests); VICE como se describe.
 KERNAL libre: 81 bytes.
+
+
+## 21. Cabecera de cinta en el bufer de 828 (21 oct 2026)
+
+La cabecera de 192 bytes queda entera en el bufer de cinta ($033C-$03FB,
+828-1019), como en el C64: tipo en 828, inicio en 829/830, fin+1 en
+831/832, nombre desde 833 y relleno. LOAD la deja ahi (antes guardaba solo
+21 bytes en $0362) y SAVE la construye ahi y la graba desde ahi. Muchas
+cintas comerciales llevan codigo en los bytes 21-191 de la cabecera y lo
+ejecutan desde 849 ($0351): ahora llega.
+
+Para dejar libre el bufer, el estado de la cinta (que vivia en
+$033C-$03B3) se ha movido:
+- lo mas usado por el manejador del IRQ de lectura, a pagina cero de
+  cinta que nuestro KERNAL no usaba ($92, $96, $97, $9C, $AD, $B0, $B1,
+  $B4-$B6, $BD-$C0);
+- el resto, al fondo de la pagina 1 ($0100-$0128), como el C64 usa
+  $0100-$013E durante la cinta. El BASIC solo usa $0100-$010F como bufer
+  temporal de numeros (FBUFFR), que no se usa durante la carga; la pila
+  baja hasta ahi solo en el limite de anidamiento del BASIC;
+- las variables de SAVE comparten direcciones con las de LOAD (nunca
+  coinciden);
+- CINV se guarda en $0127. Primero lo puse en 671-672, su sitio en el C64,
+  pero ahi esta KPREV (estado anterior del teclado) y el IRQ lo pisaba
+  antes de que la cinta parase el jiffy: en VICE, tras LOAD el C64 se
+  quedaba colgado. El arnes no lo vio porque no pulsa teclas durante la
+  carga.
+- 178/179 (TAPE1) apuntan al bufer desde RAMTAS.
+- tp_blank/tp_show/tm_off/tm_on pasan a la seccion principal para dejar
+  sitio en la isla de RAMTAS.
+
+Con las variables del IRQ en pagina cero el codigo de la cinta encoge: el
+KERNAL queda con 152 bytes libres (antes 81).
+
+Probado:
+- tests/test_cinta.py: SAVE deja la cabecera en 828 y graba esa misma;
+  LOAD la deja en 828 (tipo, nombre); una cabecera con codigo en los
+  bytes 21-191 llega entera; TAPE1 = $033C. tests/arnes.py: `simbolo()`
+  lee constantes del listado (test_cinta ya no lleva la direccion de
+  wdone fija).
+- Tolerancia de velocidad (0,70 y 1,40 con +-12 ciclos; 1,0 con +-30):
+  sigue cargando.
+- VICE: cinta con codigo en la cabecera (`LOAD` y despues `SYS849`): la
+  misma pantalla y el mismo borde que la ROM original; PEEK(828)=1 y
+  178/179 = 828 en las dos. El juego de siempre (grabar, cargar, cargar
+  la grabacion de la ROM original y al reves, VERIFY bien y mal, disco)
+  sigue bien.
+
+Queda de la cinta: los ficheros de datos (`OPEN 1,1`).
