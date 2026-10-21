@@ -83,9 +83,12 @@ an opaque peripheral):
 - Documented editor and keyboard locations kept up to date for programs
   that PEEK/POKE them. The current key is at 197/203 and the
   SHIFT/C=/CTRL flags at 653. The cursor row is at 214, and the reverse,
-  quote and insert flags are at 199/212/216. 648 holds the screen page,
-  678 the PAL/NTSC flag, and 657 can lock SHIFT+C=. The user areas 251-254
-  and 679-767 are left untouched.
+  quote and insert flags are at 199/212/216. 648 is the screen page the
+  editor writes to and reads from (change it together with $D018 to use a
+  second screen), 650 selects which keys repeat (0 = cursor keys, space,
+  DEL and INST; 128 = all; 64 = none), 678 is the PAL/NTSC flag, and 657
+  can lock SHIFT+C=. The user areas 251-254 and 679-767 are left
+  untouched.
 - BASIC zero page at the documented C64 addresses: start of program at
   43/44, end at 45/46, top of memory at 55/56, CHRGET at $73 and TXTPTR
   at 122/123, so `POKE 43/44` and CHRGET wedges work. The ADRAY1/ADRAY2

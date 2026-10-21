@@ -969,9 +969,8 @@ El arnes (tests/arnes.py) simula ahora el raster de un VIC-II PAL ($D011
 bit 7 y $D012), porque CINT lo necesita para detectar PAL.
 
 Queda pendiente:
-- 648 se lee pero no se respeta: el editor sigue escribiendo en $0400 si
-  un programa lo cambia.
-- 650 (repeticion) no se usa.
+- ~~648 se lee pero no se respeta.~~ Resuelto en la seccion 19.
+- ~~650 (repeticion) no se usa.~~ Resuelto en la seccion 19.
 - ~~Puntos de entrada internos sin colocar ($E544, $E56C, $E716, $E9FF).~~ Resuelto en la seccion 18.
 - ~~La pagina cero del BASIC sigue desplazada (TXTTAB en $28).~~ Resuelto en la seccion 17.
 - ~~LIST pone un espacio delante del numero de linea.~~ Resuelto en la seccion 18.
@@ -1078,3 +1077,47 @@ Probado:
   columna 5 (antes 6, por el espacio).
 - VICE: SYS58692 y POKE214/211+SYS58732; cinta y disco como antes.
 - Bateria completa en verde (21 tests).
+
+
+## 19. 650 (repeticion) y 648 (pagina de la pantalla) (21 oct 2026)
+
+**650 ($028A).** La repeticion ya existia para espacio, cursores, DEL e
+INST (lo que hace el C64 con 650=0). Ahora, antes de mirar esa lista, el
+bit 7 hace que repitan todas y el bit 6 que no repita ninguna. 7 bytes.
+tests/test_repeticion.py.
+
+**648 ($0288).** El editor escribe y lee en la pagina que diga 648, como
+el C64. No mueve lo que se ve: el programa tiene que cambiar tambien
+$D018 (y el banco del VIC-II si hace falta). Cambios:
+- KROWP toma la base de 648; PLOT, CLR, $E544/$E9FF, la lectura de la
+  linea y el scroll pasan todos por ella.
+- Los limites del cursor (abajo, arriba, avance de linea) se comprueban
+  con la fila (214), no comparando el puntero con $0400+1000. Mas corto.
+- HOME usa PLOT.
+- El puntero a la RAM de color sale de una sola rutina, KSETCP: el mismo
+  desplazamiento desde $D800 que el puntero de pantalla desde la pagina
+  648 (byte alto - 648 + $D8). Vale para cualquier pagina, no solo para
+  las alineadas a 1K. La usan CHROUT, KCUROFF y el parpadeo del IRQ;
+  KCLRLN hace la misma cuenta y el scroll parte directamente de $D800.
+  Una primera version usaba "AND 3, OR $D8" y el comparador ciego marco
+  14 bytes iguales al original; se cambio por la resta, que ademas es mas
+  general.
+- El scroll copia con punteros (KVPTR destino, KCPTR origen) en vez de
+  direcciones absolutas: 960 bytes de pantalla y luego 960 de color.
+  KCPTR se puede usar porque el IRQ esta inhibido dentro de CHROUT y lo
+  recalcula al parpadear. El cursor queda en la fila 24 con su columna
+  (con PLOT).
+- KSTOP se ha movido delante de $E9FF: KCLRLN crecio un byte y la cola
+  hasta $EA31 se pasaba por uno.
+
+Espacio: el KERNAL queda con 91 bytes libres fuera de los rellenos (antes
+65); lo que se ahorra en CHROUT se queda en el relleno antes de $E544.
+
+Probado:
+- tests/test_pagina648.py: con 648=200, CLR y PRINT escriben en $C800,
+  una orden tecleada se lee de alli y se ejecuta, el scroll funciona,
+  $0400 no se toca y el color va a $D800; con 648=4 vuelve a $0400.
+- VICE, misma secuencia en las dos ROMs: `POKE648,32` + $D018 para ver
+  la pantalla de $2000, CLR, PRINT, una orden y un bucle con scroll. Las
+  dos pantallas salen iguales y el cursor parpadea en su sitio.
+- Bateria completa en verde (23 tests).
