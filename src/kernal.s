@@ -54,91 +54,6 @@ COLOR   = $D800
 .org $E200              ; tras la continuacion del BASIC
 
 ; ------------------------------------------------------------
-; RESET
-; ------------------------------------------------------------
-KRESET: sei
-        cld
-        ldx #$FF
-        txs
-        lda #$37        ; datos del puerto ANTES que la direccion:
-        sta $01         ; si DDR se activa con datos=0, las ROMs se
-        lda #$2F        ; desbancan con el PC dentro de ellas
-        sta $00
-        ; --- ¿cartucho con firma CBM80 en $8004? ---
-        jsr KCBMCHK
-        bne @nocart
-        jmp ($8000)     ; vector frio del cartucho
-@nocart:
-        jsr KIOINIT     ; CIAs, VIC, timer de jiffy
-        jsr KRAMTAS     ; limpiar areas de trabajo, reloj a cero
-        jsr KRESTOR     ; vectores de pagina 3 por defecto
-        jsr KCINT       ; editor de pantalla y teclado
-        cli
-        jmp INIT        ; arranque en frio del BASIC
-
-; ------------------------------------------------------------
-; IOINIT ($FF84): CIAs, VIC y reloj jiffy
-; ------------------------------------------------------------
-KIOINIT:
-        ; --- CIAs: silenciar interrupciones ---
-        lda #$7F
-        sta $DC0D
-        sta $DD0D
-        lda $DC0D       ; limpiar pendientes
-        lda $DD0D
-        ; CIA1: puerto A salida (filas), puerto B entrada (columnas)
-        lda #$FF
-        sta $DC02
-        lda #$00
-        sta $DC03
-        ; CIA2 puerto A: banco VIC 0 (bits 0-1 = 11)
-        lda #$3F
-        sta $DD02
-        lda #$03
-        sta $DD00
-        ; --- reloj jiffy: CIA1 timer A ~60 Hz ---
-        lda #$95
-        sta $DC04
-        lda #$42
-        sta $DC05
-        lda #$81        ; habilitar IRQ de timer A
-        sta $DC0D
-        lda #$11        ; arrancar timer, recarga continua
-        sta $DC0E
-        rts
-
-; ------------------------------------------------------------
-; RAMTAS ($FF87): limpiar areas de trabajo y reloj
-; ------------------------------------------------------------
-KRAMTAS:
-        lda #$00
-        tax
-@rt1:   sta a:$0002,X   ; $0002-$0101. 'a:' fuerza modo absoluto: en modo
-                        ; pagina cero,X el indice da la vuelta y pisaba $00/$01
-        inx
-        bne @rt1
-@rt2:   sta $0200,X     ; pagina 2 (bufers)
-        inx
-        bne @rt2
-        sta KTIME       ; reloj jiffy a cero
-        sta KTIME+1
-        sta KTIME+2
-        ; punteros e indices de E/S por defecto
-        lda #$00
-        sta KMBOT       ; inicio de memoria = $0800
-        sta KLDTND
-        sta KDFLTN      ; entrada por defecto = teclado
-        lda #$08
-        sta KMBOT+1
-        lda #$00
-        sta KMTOP       ; tope de memoria = $A000
-        lda #$A0
-        sta KMTOP+1
-        lda #$03
-        sta KDFLTO      ; salida por defecto = pantalla
-        rts
-
-; ------------------------------------------------------------
 ; CINT ($FF81): VIC de pantalla, editor y teclado
 ; ------------------------------------------------------------
 KCINT:
@@ -1183,28 +1098,9 @@ KUDTIM: inc KTIME+2
         inc KTIME
 @r:     rts
 
-; ------------------------------------------------------------
-; IRQ / NMI
-; ------------------------------------------------------------
-; ------------------------------------------------------------
-; Entrada hardware de IRQ/BRK: salva registros y despacha por
-; los vectores RAM de pagina 3 ($0314 IRQ / $0316 BRK), que el
-; software puede redirigir.
-; ------------------------------------------------------------
-KIRQENT:
-        pha
-        txa
-        pha
-        tya
-        pha
-        tsx
-        lda $0104,X     ; P apilado por el hardware
-        and #$10        ; ¿flag B? entonces es BRK
-        beq @hw
-        jmp ($0316)     ; CBINV
-@hw:    jmp ($0314)     ; CINV
-
-; manejador por defecto del IRQ (destino inicial de $0314)
+;.org $EA31: manejador principal del IRQ (destino por defecto de $0314).
+; Direccion canonica: los programas encadenan su IRQ con JMP $EA31.
+.org $EA31
 KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
         jsr KUDTIM
         jsr KSCNKEY
@@ -1239,20 +1135,18 @@ KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
         sta (KCPTR),Y
         lda #$00
         sta KBLON
+        jmp @nobl
+; $EA81: salida canonica del IRQ (restaurar Y/X/A y RTI). Los programas
+; que no quieren el trabajo del KERNAL salen por JMP $EA81.
+.org $EA81
 @nobl:  pla
         tay
         pla
         tax
         pla
         rti
+.org $EA87
 
-; BRK por defecto: restaurar y seguir (destino inicial de $0316)
-KBRK:   pla
-        tay
-        pla
-        tax
-        pla
-        rti
 
 
 ; ¿firma de cartucho "CBM80" en $8004-$8008? Z=1 si esta
@@ -1269,41 +1163,29 @@ KCBMCHK:
         rts
 KCBMSIG: .byte $C3,$C2,$CD,$38,$30  ; "CBM80" en PETSCII
 
-; NMI hardware: salva registros y despacha por ($0318)
-KNMIENT:
-        pha
-        txa
-        pha
-        tya
-        pha
-        jmp ($0318)
-; manejador por defecto del NMI: cartucho primero; si no,
-; RUN/STOP-RESTORE = arranque en caliente
+; manejador por defecto del NMI (llega desde $FE47 con A/X/Y ya apilados):
+; cartucho primero; si no, RUN/STOP-RESTORE = arranque en caliente
 KNMI:   jsr KCBMCHK     ; ¿cartucho CBM80?
         bne @nocart
         jmp ($8002)     ; vector caliente del cartucho
 @nocart:
         lda $DD0D       ; reconocer/limpiar la fuente NMI del CIA2
         jsr KSTOPRAW    ; ¿RUN/STOP pulsada? (Z=1 si si) - sin romper
-        bne @ign
-        ; --- arranque en caliente: programa intacto, vuelta a READY ---
-        ldx #$FF
+        beq KWARM
+        jmp KRTIX       ; NMI espuria: restaurar A/X/Y y volver ($FEBC)
+; arranque en caliente: programa intacto, vuelta a READY. Lo usan
+; RUN/STOP-RESTORE y el BRK por defecto ($FE66).
+KWARM:  ldx #$FF
         txs             ; resetear la pila
         cli
         jsr KRESTOR     ; restaurar vectores de pagina 3
         jmp READY       ; entrada en caliente del BASIC
-@ign:   pla             ; NMI espuria: restaurar y volver
-        tay
-        pla
-        tax
-        pla
-        rti
 
 ; --- tabla ROM de vectores por defecto para pagina 3 ---
 KVECTAB:
         .word KIRQ      ; $0314 CINV
-        .word KBRK      ; $0316 CBINV
-        .word KNMI      ; $0318 NMINV
+        .word KBRKDEF   ; $0316 CBINV
+        .word KNMIDEF   ; $0318 NMINV
         .word KOPEN     ; $031A IOPEN
         .word KCLOSE    ; $031C ICLOSE
         .word KCHKIN    ; $031E ICHKIN
@@ -1318,16 +1200,6 @@ KVECTAB:
         .word KLOAD     ; $0330 ILOAD
         .word KSAVE     ; $0332 ISAVE
 KVECEND:
-
-; RESTOR ($FF8A): restaurar los vectores por defecto
-KRESTOR:
-        ldx #$00
-@l:     lda KVECTAB,X
-        sta $0314,X
-        inx
-        cpx #(KVECEND-KVECTAB)
-        bne @l
-        rts
 
 ; VECTOR ($FF8D): C=1 copia los vectores a (X/Y); C=0 los carga desde (X/Y)
 KVECTOR:
@@ -1422,6 +1294,22 @@ KPLOT:  bcc @set
 KIOBASE:
         ldx #$00
         ldy #$DC
+        rts
+; SETTIM ($FFDB): fijar el reloj jiffy (A/X/Y = medio/...)
+KSETTIM:
+        sei
+        sta KTIME+2
+        stx KTIME+1
+        sty KTIME
+        cli
+        rts
+; RDTIM ($FFDE): leer el reloj jiffy
+KRDTIM:
+        sei
+        lda KTIME+2
+        ldx KTIME+1
+        ldy KTIME
+        cli
         rts
 ; CLRCHN ($FFCC): canales de E/S a por defecto (teclado in, pantalla out)
 KCLRCHN:
@@ -2423,17 +2311,7 @@ KIOERR: cmp #$01
         ldy KIOMSG+1,X
         jsr STROUT      ; imprimir el mensaje (sin " ERROR")
         jmp TYPERR      ; " ERROR" + numero de linea + READY
-KIOMSG: .word KIOM1,KIOM2,KIOM3,KIOM4,KIOM5
-        .word KIOM6,KIOM7,KIOM8,KIOM9
-KIOM1:  .byte "TOO MANY FILES",0
 KIOM2:  .byte "FILE OPEN",0
-KIOM3:  .byte "FILE NOT OPEN",0
-KIOM4:  .byte "FILE NOT FOUND",0
-KIOM5:  .byte "DEVICE NOT PRESENT",0
-KIOM6:  .byte "NOT INPUT FILE",0
-KIOM7:  .byte "NOT OUTPUT FILE",0
-KIOM8:  .byte "MISSING FILE NAME",0
-KIOM9:  .byte "ILLEGAL DEVICE NUMBER",0
 
 
 ; ------------------------------------------------------------
@@ -2455,28 +2333,11 @@ KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
 KERRMSG:lda KERRTAB,X
         ldy KERRTAB+1,X
         jmp STROUT      ; imprime el mensaje y RTS
-KERRTAB:
-        .word KERA00,KERA02,KERA04,KERA06,KERA08,KERA10,KERA12
-        .word KERA14,KERA16,KERA18,KERA20,KERA22,KERA24,KERA26
-        .word KERA28,KERA30,KERA32,KERA34
-KERA00: .byte "NEXT WITHOUT FOR",0
 KERA02: .byte "SYNTAX",0
-KERA04: .byte "RETURN WITHOUT GOSUB",0
 KERA06: .byte "OUT OF DATA",0
-KERA08: .byte "ILLEGAL QUANTITY",0
 KERA10: .byte "OVERFLOW",0
-KERA12: .byte "OUT OF MEMORY",0
-KERA14: .byte "UNDEF'D STATEMENT",0
-KERA16: .byte "BAD SUBSCRIPT",0
-KERA18: .byte "REDIM'D ARRAY",0
-KERA20: .byte "DIVISION BY ZERO",0
-KERA22: .byte "ILLEGAL DIRECT",0
 KERA24: .byte "TYPE MISMATCH",0
-KERA26: .byte "STRING TOO LONG",0
 KERA28: .byte "FILE DATA",0
-KERA30: .byte "FORMULA TOO COMPLEX",0
-KERA32: .byte "CAN'T CONTINUE",0
-KERA34: .byte "UNDEF'D FUNCTION",0
 
 ; ============================================================
 ; CINTA (datasette): carga por dispositivo 1. Decode clean-room
@@ -3528,9 +3389,7 @@ wbp_m1:
         rts
 wbp_notmark:
         cmp #$09
-        bne wbp_np
-        jmp wbp_par         ; wbp_par vive en el hueco $FD53 (ver abajo)
-wbp_np:
+        beq wbp_par
         ldx wsym            ; wsym 1..8: bit (wsym-1) de wcur
         dex
         lda wcur
@@ -3569,24 +3428,6 @@ wbp_b0h1:
         lda #>WM
         sta wnext+1
         rts
-
-
-; ------------------------------------------------------------
-; Tabla de saltos estandar documentada
-; ------------------------------------------------------------
-; ------------------------------------------------------------
-; Trampolines de compatibilidad en las direcciones INTERNAS
-; documentadas que muchos cartuchos y programas llaman directamente
-; (en vez de la tabla de saltos). Honran una interfaz publicada;
-; no contienen codigo derivado de la ROM original.
-; ------------------------------------------------------------
-.org $FD15
-        jmp KRESTOR     ; RESTOR interno
-.org $FD50
-        jmp KRAMTAS     ; RAMTAS interno
-
-; --- emision del pulso de paridad (escritura de cinta), en el hueco
-;     $FD53-$FDA2: no cabia antes del trampolin de $FD15 ---
 wbp_par:
         lda wpar            ; wsym==9: dipolo(wpar)
         beq wbp_p0
@@ -3617,28 +3458,8 @@ wbp_p0h1:
         lda #>WM
         sta wnext+1
         rts
-; SETTIM/RDTIM tambien viven en este hueco (liberan sitio antes de $FD15)
-; SETTIM ($FFDB): fijar el reloj jiffy (A/X/Y = medio/...)
-KSETTIM:
-        sei
-        sta KTIME+2
-        stx KTIME+1
-        sty KTIME
-        cli
-        rts
-; RDTIM ($FFDE): leer el reloj jiffy
-KRDTIM:
-        sei
-        lda KTIME+2
-        ldx KTIME+1
-        ldy KTIME
-        cli
-        rts
-.org $FDA3
-        jmp KIOINIT     ; IOINIT interno
 
-; --- continuacion de ESCRITURA de cinta (wbyteadv/wcalcpar)
-;     reubicada aqui (hueco $FDA6-$FF5A) por falta de espacio antes de $FD15
+; --- continuacion de ESCRITURA de cinta (wbyteadv/wcalcpar) ---
 ; avanzar el estado tras emitir un pulso del flujo de bytes
 wbyteadv:
         lda whalf
@@ -3837,6 +3658,201 @@ ts_nmend:
         sta $DC0D           ; rehabilitar IRQ de timer A
         clc
         rts
+
+
+
+
+.org $FCE2
+
+; ------------------------------------------------------------
+; RESET
+; ------------------------------------------------------------
+KRESET: sei
+        cld
+        ldx #$FF
+        txs
+        lda #$37        ; datos del puerto ANTES que la direccion:
+        sta $01         ; si DDR se activa con datos=0, las ROMs se
+        lda #$2F        ; desbancan con el PC dentro de ellas
+        sta $00
+        ; --- ¿cartucho con firma CBM80 en $8004? ---
+        jsr KCBMCHK
+        bne @nocart
+        jmp ($8000)     ; vector frio del cartucho
+@nocart:
+        jsr KIOINIT     ; CIAs, VIC, timer de jiffy
+        jsr KRAMTAS     ; limpiar areas de trabajo, reloj a cero
+        jsr KRESTOR     ; vectores de pagina 3 por defecto
+        jsr KCINT       ; editor de pantalla y teclado
+        cli
+        jmp INIT        ; arranque en frio del BASIC
+
+.org $FD15
+
+; RESTOR ($FF8A): restaurar los vectores por defecto
+KRESTOR:
+        ldx #$00
+@l:     lda KVECTAB,X
+        sta $0314,X
+        inx
+        cpx #(KVECEND-KVECTAB)
+        bne @l
+        rts
+
+.org $FD50
+
+; ------------------------------------------------------------
+; RAMTAS ($FF87): limpiar areas de trabajo y reloj
+; ------------------------------------------------------------
+KRAMTAS:
+        lda #$00
+        tax
+@rt1:   sta a:$0002,X   ; $0002-$0101. 'a:' fuerza modo absoluto: en modo
+                        ; pagina cero,X el indice da la vuelta y pisaba $00/$01
+        inx
+        bne @rt1
+@rt2:   sta $0200,X     ; pagina 2 (bufers)
+        inx
+        bne @rt2
+        sta KTIME       ; reloj jiffy a cero
+        sta KTIME+1
+        sta KTIME+2
+        ; punteros e indices de E/S por defecto
+        lda #$00
+        sta KMBOT       ; inicio de memoria = $0800
+        sta KLDTND
+        sta KDFLTN      ; entrada por defecto = teclado
+        lda #$08
+        sta KMBOT+1
+        lda #$00
+        sta KMTOP       ; tope de memoria = $A000
+        lda #$A0
+        sta KMTOP+1
+        lda #$03
+        sta KDFLTO      ; salida por defecto = pantalla
+        rts
+
+.org $FDA3
+
+; ------------------------------------------------------------
+; IOINIT ($FF84): CIAs, VIC y reloj jiffy
+; ------------------------------------------------------------
+KIOINIT:
+        ; --- CIAs: silenciar interrupciones ---
+        lda #$7F
+        sta $DC0D
+        sta $DD0D
+        lda $DC0D       ; limpiar pendientes
+        lda $DD0D
+        ; CIA1: puerto A salida (filas), puerto B entrada (columnas)
+        lda #$FF
+        sta $DC02
+        lda #$00
+        sta $DC03
+        ; CIA2 puerto A: banco VIC 0 (bits 0-1 = 11)
+        lda #$3F
+        sta $DD02
+        lda #$03
+        sta $DD00
+        ; --- reloj jiffy: CIA1 timer A ~60 Hz ---
+        lda #$95
+        sta $DC04
+        lda #$42
+        sta $DC05
+        lda #$81        ; habilitar IRQ de timer A
+        sta $DC0D
+        lda #$11        ; arrancar timer, recarga continua
+        sta $DC0E
+        rts
+
+.org $FF48
+
+; ------------------------------------------------------------
+; IRQ / NMI
+; ------------------------------------------------------------
+; ------------------------------------------------------------
+; Entrada hardware de IRQ/BRK: salva registros y despacha por
+; los vectores RAM de pagina 3 ($0314 IRQ / $0316 BRK), que el
+; software puede redirigir.
+; ------------------------------------------------------------
+KIRQENT:
+        pha
+        txa
+        pha
+        tya
+        pha
+        tsx
+        lda $0104,X     ; P apilado por el hardware
+        and #$10        ; ¿flag B? entonces es BRK
+        beq @hw
+        jmp ($0316)     ; CBINV
+@hw:    jmp ($0314)     ; CINV
+;--- $FE43: entrada hardware del NMI. Solo SEI y salto por ($0318): el
+;    manejador de usuario ve la trama de la CPU (PC+P) y vuelve con RTI.
+.org $FE43
+KNMIENT:
+        sei
+        jmp ($0318)
+;--- $FE47: manejador NMI por defecto (destino de $0318): apila A/X/Y
+KNMIDEF:
+        pha
+        txa
+        pha
+        tya
+        pha
+        jmp KNMI
+;--- $FE66: BRK por defecto (destino de $0316): arranque en caliente
+.org $FE66
+KBRKDEF:
+        jmp KWARM
+;--- $FEBC: salida comun de interrupcion: restaurar Y/X/A y RTI
+.org $FEBC
+KRTIX:  pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+.org $E1DE
+KIOM9:  .byte "ILLEGAL DEVICE NUMBER",0
+
+.org $FEC2
+KERRTAB:
+        .word KERA00,KERA02,KERA04,KERA06,KERA08,KERA10,KERA12
+        .word KERA14,KERA16,KERA18,KERA20,KERA22,KERA24,KERA26
+        .word KERA28,KERA30,KERA32,KERA34
+KERA04: .byte "RETURN WITHOUT GOSUB",0
+KERA30: .byte "FORMULA TOO COMPLEX",0
+KIOM5:  .byte "DEVICE NOT PRESENT",0
+KIOMSG: .word KIOM1,KIOM2,KIOM3,KIOM4,KIOM5
+        .word KIOM6,KIOM7,KIOM8,KIOM9
+KIOM8:  .byte "MISSING FILE NAME",0
+
+.org $FDDA
+KERA14: .byte "UNDEF'D STATEMENT",0
+KERA00: .byte "NEXT WITHOUT FOR",0
+KERA08: .byte "ILLEGAL QUANTITY",0
+KERA20: .byte "DIVISION BY ZERO",0
+KERA34: .byte "UNDEF'D FUNCTION",0
+KIOM7:  .byte "NOT OUTPUT FILE",0
+
+.org $FE69
+KERA26: .byte "STRING TOO LONG",0
+KIOM1:  .byte "TOO MANY FILES",0
+KIOM4:  .byte "FILE NOT FOUND",0
+KIOM6:  .byte "NOT INPUT FILE",0
+KERA22: .byte "ILLEGAL DIRECT",0
+
+.org $FD23
+KERA32: .byte "CAN'T CONTINUE",0
+KIOM3:  .byte "FILE NOT OPEN",0
+KERA12: .byte "OUT OF MEMORY",0
+
+.org $FF5E
+KERA16: .byte "BAD SUBSCRIPT",0
+KERA18: .byte "REDIM'D ARRAY",0
+;;; ISLAS-FIN
 
 .org $FF5B
         jmp KCINT       ; CINT interno
