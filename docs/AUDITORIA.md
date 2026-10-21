@@ -81,6 +81,11 @@ A efectos del repo actual cuenta como GAP.
 | Cinta compatible con un C64 real | TEST + VICE | El lector no seguia el pulso corto real (398 ciclos de manejador para 376 de pulso) y el grabador emitia un flanco por pulso. Arreglado y probado en VICE en los dos sentidos contra un C64 de referencia como caja negra; tests/tapgen.py comprueba el formato desde fuera (CONTINUIDAD, seccion 15). |
 | `qd` y `tpulse` en la misma direccion ($0384) | MECH | Equivalencias en src/kernal.s; qd pasa a $03A2. |
 | CR no apagaba el inverso | TEST + VICE | Tras `LOAD"$",8` + LIST todo salia en inverso. tests/test_modes.py. |
+| $EA7E sin codigo | TEST | Tenia NOP/BRK/BRK; ahora LDA $DC0D + $EA81. tests/test_canonicas.py. |
+| Modo comillas e insercion del editor | TEST + VICE | Antes LIST ejecutaba los controles de las cadenas y no se podian teclear. tests/test_modes.py. |
+| Variables documentadas del editor y zonas libres | TEST + VICE | 197/203/214/648/653/657/678; el editor pisaba 251-254 y 679-767. tests/test_variables.py (falla con el build anterior). |
+| Grabador de cinta: wnext leido a medias por el IRQ | VICE + TEST | Pulso de ~90 ciclos en el primer marcador de cada bloque. Cola de 3 pulsos; test de que nunca se vacia. |
+| KSERIN y el IRQ compartian KTMP3 | MECH | Carrera: una tecla durante una lectura del bus podia cambiar el byte leido. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

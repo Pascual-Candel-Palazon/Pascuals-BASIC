@@ -132,6 +132,21 @@ def main():
     ok &= caso("JMP $EA81 restaura A/X/Y y vuelve", regs_intactos(mq))
     ok &= caso("JMP $EA81 no avanza el reloj", mq.mem[0xA2] == t0)
 
+    # --- IRQ que sale por $EA7E: reconocer el CIA (LDA $DC0D) y $EA81 ---
+    ok &= caso("$EA7E = LDA $DC0D seguido de la salida $EA81",
+               list(img[0xEA7E:0xEA87]) == [0xAD, 0x0D, 0xDC, 0x68, 0xA8,
+                                            0x68, 0xAA, 0x68, 0x40])
+    mq = maquina_lista()
+    mq.mem.write(0xC000, [0xA9, 0x00, 0xAA, 0xA8,             # LDA #0 TAX TAY
+                          0x4C, 0x7E, 0xEA])                  # JMP $EA7E
+    mq.mem.write(0x0314, [0x00, 0xC0])
+    t0 = mq.mem[0xA2]
+    bucle_en(mq)
+    irq(mq, img)
+    correr(mq, 300)
+    ok &= caso("JMP $EA7E restaura A/X/Y y vuelve", regs_intactos(mq))
+    ok &= caso("JMP $EA7E no avanza el reloj", mq.mem[0xA2] == t0)
+
     # --- BRK por defecto ($FE66): arranque en caliente, programa intacto.
     #     Tras BRK NO debe seguir ejecutandose lo que hay detras ---
     mq = Maquina()

@@ -16,8 +16,8 @@ def caso(nombre, cond):
 def emite(teclas):
     t = set(); mq = Maquina(teclas_matriz=t)
     for i in range(16):
-        mq.mem.write(0x02B0 + i, [0])
-    for a in (0xC6, 0x02AB, 0x02E0, 0x02E1, 0x02E2):
+        mq.mem.write(0x0293 + i, [0])
+    for a in (0xC6, 0x02A3, 0x02A4, 0x02A5, 0x0292):
         mq.mem.write(a, [0])
     t.update(teclas); mq.subrutina(SCN)
     n = mq.mem[0xC6]

@@ -77,6 +77,15 @@ an opaque peripheral):
   - Tests: `tests/test_cinta.py`, with a cycle-level CIA1 model
     (`tests/cinta.py`) and an independent Python model of the tape format
     (`tests/tapgen.py`).
+- Screen editor with C64 quote mode and insert mode: cursor and color
+  keys typed inside quotes are stored in the line and shown reversed, and
+  LIST shows them instead of executing them.
+- Documented editor and keyboard locations kept up to date for programs
+  that PEEK/POKE them. The current key is at 197/203 and the
+  SHIFT/C=/CTRL flags at 653. The cursor row is at 214, and the reverse,
+  quote and insert flags are at 199/212/216. 648 holds the screen page,
+  678 the PAL/NTSC flag, and 657 can lock SHIFT+C=. The user areas 251-254
+  and 679-767 are left untouched.
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -113,7 +122,7 @@ Requirements: `python3`, `cc65`, and `py65` for the tests
 ```
 ./build.sh        # builds into build/ and copies the ROMs to bin/
 cd tests
-./run_all.sh      # full suite: 17 tests (slow under py65, about 15 minutes)
+./run_all.sh      # full suite: 18 tests (slow under py65, about 15 minutes)
 python3 test_humo.py   # or any single test_*.py
 ```
 

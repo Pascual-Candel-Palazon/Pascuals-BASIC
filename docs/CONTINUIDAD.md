@@ -889,3 +889,88 @@ Diferencias que quedan respecto al C64:
 - No hay ficheros de datos en cinta (OPEN 1,1).
 - LIST de BASIC deja un espacio antes del numero de linea (" 10 PRINT")
   donde el C64 no lo deja. Es del BASIC, pendiente de revisar.
+
+## 16. Editor y direcciones documentadas (21 oct 2026)
+
+Repaso de pendientes contra todas las sesiones anteriores. Arreglado:
+
+1. **$EA7E.** Antes tenia `NOP / BRK / BRK`. Ahora es `LDA $DC0D`
+   (reconocer el CIA1) seguido de la salida $EA81, como el C64. KIRQ
+   termina ahi, asi que el reconocimiento se hace al final del IRQ.
+   Estaba pedido desde agosto y habia quedado sin hacer. Test en
+   tests/test_canonicas.py.
+2. **Modo comillas y modo insercion del editor.**
+   - La comilla impresa o tecleada conmuta el modo ($D4).
+   - Dentro de comillas, los controles no se ejecutan: se ven como
+     caracteres invertidos ($00-$1F a pantalla $80-$9F, $80-$9F a
+     $C0-$DF). DEL e INST siguen funcionando.
+   - INST abre un hueco y cuenta en $D8. Lo que se teclee en el hueco,
+     controles incluidos, se escribe invertido.
+   - RETURN (o SHIFT+RETURN) sale de comillas, insercion e inverso.
+   - Al leer la linea, un caracter invertido dentro de comillas vuelve a
+     ser el control (rutina KSC2P), asi que `10 PRINT"{CLR}"` se guarda
+     con $93.
+   - LIST ya no ejecuta los controles de las cadenas.
+3. **Direcciones documentadas que ahora se mantienen:**
+   - 197/203 ($C5/$CB): tecla pulsada, columna*8 + fila, 64 sin tecla.
+   - 653 ($028D): SHIFT/C=/CTRL.
+   - 199 ($C7): inverso.
+   - 212 ($D4): comillas.
+   - 216 ($D8): insercion.
+   - 214 ($D6): fila del cursor.
+   - $D9-$F1: tabla de enlace de lineas.
+   - $F3/$F4: puntero a la RAM de color.
+   - $CD/$CF: parpadeo del cursor.
+   - 648 ($0288): vale 4.
+   - 678 ($02A6): 1 en PAL. Se detecta en CINT mirando si existe la linea
+     de raster 311.
+   - 657 ($0291): con el bit 7 a 1, SHIFT+C= no cambia el juego de
+     caracteres.
+4. **Zonas libres para programas.** El editor tenia su estado en
+   $02A0-$02F2 y el puntero de color en $FB/$FC. En el C64, 251-254
+   ($FB-$FE) y 679-767 ($02A7-$02FF) son libres para el usuario, y la
+   lectura del teclado los pisaba en cada IRQ. El estado pasa a:
+   - las posiciones documentadas de arriba;
+   - posiciones de pagina cero que en el C64 son internas del KERNAL
+     ($C8-$CA, $CE, $D0, $D5, $D7, $F2, $F5-$FA, $9B, $9E, $9F);
+   - la zona RS232 de la pagina 2 ($0293-$02A5), que este KERNAL no usa;
+   - $028B, $028C, $028E y $0292.
+   Probado: tras teclear, escribir y hacer scroll, 679-767 y 251-254 siguen
+   intactos (tests/test_variables.py y VICE).
+5. **KSERIN usaba KTMP3**, que tambien usa el IRQ del teclado. Una tecla
+   durante una lectura del disco podia cambiar el byte leido. Ahora usa
+   su propia variable.
+
+Espacio: el editor no cabia en su seccion. Se hizo sitio asi:
+- CHROUT reutiliza KCUROFF, que ahora usa PHP/PLP en vez de SEI/CLI;
+- el generador de pulsos de cinta es una tabla (la misma secuencia de
+  pulsos, verificada contra la grabacion anterior), y los finales de byte
+  comparten cola (wnewbyte);
+- KSCROLL va a la seccion principal;
+- tres tablas pequenas van a huecos de islas.
+
+6. **Grabador de cinta: carrera en la entrega de pulsos.** El bucle
+   principal dejaba el pulso siguiente en wnext (2 bytes) y el manejador
+   lo copiaba al latch en la bajada. En el inicio de un byte, o al pasar
+   de la guia a los datos, el calculo puede durar mas que un pulso. En
+   VICE el IRQ cayo entre las dos escrituras de wnext: latch $0057 y un
+   pulso de unos 90 ciclos en el primer marcador de cada bloque. En py65
+   no salia por suerte de tiempos. Ahora el bucle llena una cola de 3
+   pulsos (wqlo/wqhi, indices wqh/wqt) y el manejador la vacia, asi que
+   los picos de calculo no llegan al timer. El fallo estaba latente desde
+   la version que se subio en 60fe54c. tests/test_cinta.py comprueba que
+   la cola nunca se vacia antes del final.
+
+KERNAL libre: 28 bytes.
+
+El arnes (tests/arnes.py) simula ahora el raster de un VIC-II PAL ($D011
+bit 7 y $D012), porque CINT lo necesita para detectar PAL.
+
+Queda pendiente:
+- 648 se lee pero no se respeta: el editor sigue escribiendo en $0400 si
+  un programa lo cambia.
+- 650 (repeticion) no se usa.
+- Puntos de entrada internos sin colocar ($E544, $E56C, $E716, $E9FF).
+- La pagina cero del BASIC sigue desplazada (TXTTAB en $28).
+- LIST pone un espacio delante del numero de linea.
+- Diferencias de cinta de la seccion 15.

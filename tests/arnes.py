@@ -58,6 +58,16 @@ class Maquina:
                     v &= ~(1 << bit)
             return v
         self.mem.subscribe_to_read([0xDC01], r_dc01)
+        # VIC-II PAL: 312 lineas de 63 ciclos; $D012 y el bit 7 de $D011
+        # dan la linea de raster actual
+        def linea():
+            return (self.mpu.processorCycles // 63) % 312
+        vic = {"d011": 0x1B}
+        self.mem.subscribe_to_write([0xD011],
+                                    lambda a, v: vic.update(d011=v) or v)
+        self.mem.subscribe_to_read([0xD011], lambda a: (vic["d011"] & 0x7F)
+                                   | (0x80 if linea() > 255 else 0))
+        self.mem.subscribe_to_read([0xD012], lambda a: linea() & 0xFF)
         self.mpu = MPU(memory=self.mem)
         self.mpu.pc = self.img[0xFFFC] | (self.img[0xFFFD] << 8)
         self.irqvec = self.img[0xFFFE] | (self.img[0xFFFF] << 8)

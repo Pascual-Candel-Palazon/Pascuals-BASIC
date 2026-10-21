@@ -14,7 +14,8 @@
 
 ; --- RAM propia del kernal (fuera de las zonas que usa el BASIC) ---
 KVPTR   = $C3
-KCPTR   = $FB           ; puntero ZP a la RAM de color
+KSERT   = $9B             ; temporal de KSERIN (fuera del IRQ)
+KCPTR   = $F3           ; puntero a la RAM de color (USER, documentado; $FB-$FE quedan libres)
 KMSGFL  = $009D         ; flags de mensajes del kernal
 KLDTND  = $0098         ; numero de ficheros abiertos
 KDFLTN  = $0099         ; dispositivo de entrada por defecto
@@ -46,7 +47,7 @@ KCOL    = $D3           ; columna del cursor (0-39)
 KNDX    = $C6           ; numero de teclas en bufer
 KTIME   = $A0           ; reloj jiffy (3 bytes)
 KBUF    = $0277         ; bufer de teclado (10 bytes)
-KMATRIX = $02A0         ; estado anterior de la matriz (8 bytes)
+KMATRIX = $0293         ; matriz del teclado (8 bytes; zona RS232, sin uso aqui)
 
 SCREEN  = $0400
 COLOR   = $D800
@@ -70,6 +71,20 @@ KCINT:
         sta $D020       ; borde azul claro
         lda #$06
         sta $D021       ; fondo azul
+        lda #$04
+        sta $0288       ; pagina de la pantalla (648); el editor usa $0400
+        ; --- PAL/NTSC ($02A6, 678): 1 si existe la linea de raster 311 ---
+        ldx #$00
+@pl:    lda $D011
+        bpl @pl         ; esperar a una linea >= 256
+@p2:    lda $D012
+        cmp #$37        ; 311 = $137
+        beq @pal
+        lda $D011
+        bmi @p2
+        bpl @ntsc       ; volvio a < 256 sin pasar por la 311
+@pal:   inx
+@ntsc:  stx $02A6
         ; --- limpiar pantalla y color ---
         jsr KCLS
         ; --- estado de teclado y editor ---
@@ -161,27 +176,46 @@ KCHROUT:
         clc
         rts
 @noserout:
-        ; --- apagar el cursor si esta encendido ---
-        lda KBLON
-        beq @nocur
-        ldy KCOL
-        lda (KPNT),Y
-        eor #$80
-        sta (KPNT),Y
-        lda KPNT        ; restaurar el color guardado bajo el cursor
-        sta KCPTR
-        lda KPNT+1
-        clc
-        adc #$D4
-        sta KCPTR+1
-        lda KGDCOL
-        sta (KCPTR),Y
-        lda #$00
-        sta KBLON
+        jsr KCUROFF     ; apagar el cursor si esta encendido
         lda #20
         sta KBLCNT      ; reiniciar la cadencia al teclear
 @nocur: tsx
         lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
+        ; --- modo comillas y modo insercion (comportamiento documentado):
+        ;     la comilla conmuta el modo; dentro, los controles no se
+        ;     ejecutan sino que se ven como caracteres invertidos. DEL e
+        ;     INST siguen funcionando en comillas; en insercion solo INST.
+        ;     RETURN sale de los dos modos ---
+        cmp #$22
+        bne @noq
+        inc KQTSW
+        jmp @ok1        ; la comilla se imprime normal
+@noq:   cmp #$8D        ; SHIFT+RETURN: retorno de carro
+        bne @no8d
+        jmp @cr
+@no8d:  tay
+        and #$7F
+        cmp #$20
+        bcs @nctl       ; no es control
+        cpy #$0D
+        beq @nctl
+        lda KINSRT
+        bne @rev        ; insercion: todo se ve (salvo INST)
+        lda KQTSW
+        lsr a
+        bcc @nctl       ; modo normal: ejecutar
+        cpy #$14
+        beq @nctl       ; DEL funciona en comillas
+@rev:   cpy #$94
+        beq @nctl       ; INST siempre se ejecuta
+        tya
+        bmi @rv8
+        ora #$80        ; $00-$1F -> pantalla $80-$9F (letra invertida)
+        jmp @store
+@rv8:   clc
+        adc #$40        ; $80-$9F -> pantalla $C0-$DF
+        jmp @store
+@nctl:  tya
         ; --- ¿es un codigo de color (CTRL+1..8 / C=+1..8)? ---
         ldx #15
 @colt:  cmp KCOLTAB,X
@@ -278,15 +312,20 @@ KCHROUT:
         sta KCPTR+1
         lda KCOLOR
         sta (KCPTR),Y
-        inc KCOL
+        lda KINSRT
+        beq @nins
+        dec KINSRT      ; un espacio insertado menos
+@nins:  inc KCOL
         lda KCOL
         cmp #40
         bcc @jd3
         lda #$00        ; wrap: la nueva fila es CONTINUACION
         sta KLNKV
         jmp @advrow
-@cr:    lda #$00        ; CR apaga el modo inverso (comportamiento documentado)
+@cr:    lda #$00        ; CR apaga inverso, comillas e insercion (documentado)
         sta KRVS
+        sta KQTSW
+        sta KINSRT
         lda #$80        ; CR explicito: la nueva fila INICIA linea logica
         sta KLNKV
 @advrow:
@@ -338,6 +377,7 @@ KCHROUT:
         jmp @ins1
 @ins2:  lda #$20
         sta (KPNT),Y    ; espacio en la columna del cursor
+        inc KINSRT      ; modo insercion: lo que se teclee en el hueco
         jmp @done
 @del:   lda KCOL
         beq @done       ; en columna 0 no hay nada que borrar
@@ -392,79 +432,6 @@ KCHROUT:
         rts
 
 ; ------------------------------------------------------------
-; scroll de una linea hacia arriba
-; Los bloques se copian SECUENCIALMENTE y completos: entrelazar
-; las paginas con un mismo indice corrompe los 40 bytes que el
-; bloque siguiente pisa antes de que el anterior los lea.
-; ------------------------------------------------------------
-KSCROLL:
-        inc KSCRCNT     ; contador global (ajuste del editor)
-        ldx #$00
-@s1:    lda SCREEN+40,X
-        sta SCREEN,X
-        inx
-        bne @s1
-@s2:    lda SCREEN+$100+40,X
-        sta SCREEN+$100,X
-        inx
-        bne @s2
-@s3:    lda SCREEN+$200+40,X
-        sta SCREEN+$200,X
-        inx
-        bne @s3
-@s4:    lda SCREEN+$300+40,X
-        sta SCREEN+$300,X
-        inx
-        cpx #<(1000-40-$300)
-        bne @s4
-        ldx #39         ; limpiar ultima fila
-        lda #$20
-@s5:    sta SCREEN+960,X
-        dex
-        bpl @s5
-        ; cursor a inicio de la ultima fila
-        lda #<(SCREEN+960)
-        sta KPNT
-        lda #>(SCREEN+960)
-        sta KPNT+1
-        ; --- desplazar la RAM de color igual que la pantalla ---
-        ldx #$00
-@cs1:   lda COLOR+40,X
-        sta COLOR,X
-        inx
-        bne @cs1
-@cs2:   lda COLOR+$100+40,X
-        sta COLOR+$100,X
-        inx
-        bne @cs2
-@cs3:   lda COLOR+$200+40,X
-        sta COLOR+$200,X
-        inx
-        bne @cs3
-@cs4:   lda COLOR+$300+40,X
-        sta COLOR+$300,X
-        inx
-        cpx #<(1000-40-$300)
-        bne @cs4
-        ldx #39         ; ultima fila de color = color actual
-        lda KCOLOR
-@cs5:   sta COLOR+960,X
-        dex
-        bpl @cs5
-        ; desplazar la tabla de enlace una fila hacia arriba
-        ldx #$00
-@shk:   lda KLNK+1,X
-        sta KLNK,X
-        inx
-        cpx #24
-        bne @shk
-        lda #$80        ; la nueva fila inferior inicia linea (por defecto)
-        sta KLNK+24
-        lda #24
-        sta KROW
-        rts
-
-; ------------------------------------------------------------
 ; SCNKEY: escaneo de la matriz; mete nuevas pulsaciones en KBUF
 ; (sin shift en v0). Deteccion de flanco contra KPREV.
 ; ------------------------------------------------------------
@@ -505,7 +472,10 @@ KSCNKEY:
         beq @nocbm
         inc KCBM
 @nocbm:
-        ; --- SHIFT+C= conmuta el caso (deteccion de flanco) ---
+        ; --- SHIFT+C= conmuta el caso (deteccion de flanco), salvo con el
+        ;     bit 7 de $0291 (657) a 1, como en el C64 ---
+        bit $0291
+        bmi @combof
         lda KSHIFT
         beq @combof
         lda KCBM
@@ -622,15 +592,28 @@ KSCNKEY:
         bcs @norpt
         sta KBUF,X
         inc KNDX
-@norpt: rts
+@norpt: ; --- variables documentadas del teclado ---
+        lda #64         ; $C5/$CB: codigo de la tecla pulsada (64 = ninguna)
+        ldx KLMASK
+        beq @nk
+        lda KLIDX       ; columna*8 + fila de la matriz
+@nk:    sta $CB
+        sta $C5
+        lda KCTRL       ; $028D: bit0 SHIFT, bit1 C=, bit2 CTRL
+        asl a
+        ora KCBM
+        asl a
+        ldx KSHIFT
+        beq @ns
+        ora #$01
+@ns:    sta $028D
+        rts
 
-KRPTSET: .byte $20,$1D,$9D,$11,$91,$14,$94
 
-KTMP    = $02A8
-KTMP2   = $02A9
-KPREV   = $02B0         ; estado anterior para deteccion de flanco
+KTMP    = $D7
+KTMP2   = $F2
+KPREV   = $029B         ; estado anterior para deteccion de flanco (8 bytes)
 KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
-KBITS:  .byte $01,$02,$04,$08,$10,$20,$40,$80
 
 ; tabla matriz->PETSCII (sin shift), fila=columna CIA, 8x8
 KEYTAB:
@@ -704,7 +687,7 @@ KCOLTAB:
         .byte $90,$05,$1C,$9F,$9C,$1E,$1F,$9E
         .byte $81,$95,$96,$97,$98,$99,$9A,$9B
 
-KSHIFT  = $02AB
+KSHIFT  = $02A3
 
 ; SHIFT+RUN/STOP: mete "LOAD" + CR + "RUN" + CR en el bufer de teclado,
 ; replicando el atajo del C64. El LOAD sin argumentos usa el dispositivo
@@ -727,7 +710,6 @@ KSRSTUF:
 @fin:   pla
         tay
         rts
-KSRTAB: .byte "LOAD",$0D,"RUN",$0D,$00
 
 ; ------------------------------------------------------------
 ; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
@@ -765,7 +747,7 @@ KGETIN: lda KDFLTN
         tax
         lda #$00
         rts
-KTMP3   = $02AA
+KTMP3   = $F5
 
 ; ------------------------------------------------------------
 ; CHRIN: espera un caracter, lo devuelve con eco
@@ -801,10 +783,6 @@ KCHRIN: lda KDFLTN
         rts
 
 @editar:
-        lda KPNT        ; recordar el inicio de la linea logica
-        sta KLROW
-        lda KPNT+1
-        sta KLROW+1
         lda KCOL
         sta KLSTART
         lda KROW
@@ -817,6 +795,27 @@ KCHRIN: lda KDFLTN
         beq @bucle
         cmp #$0D
         beq @jfin
+        ; en comillas o insercion las teclas de control se imprimen
+        ; (KCHROUT las invierte), salvo INST y, solo en comillas, DEL
+        tay
+        and #$7F
+        cmp #$20
+        tya
+        bcs @nomodo
+        cmp #$94
+        beq @nomodo
+        ldx KINSRT
+        bne @jimp
+        ldx KQTSW
+        beq @nomodo     ; (KQTSW: bit0; tras un CR vale 0)
+        txa
+        lsr a
+        tya
+        bcc @nomodo
+        cmp #$14
+        beq @nomodo
+@jimp:  jmp @imp
+@nomodo:
         cmp #$14        ; DEL: recoger el texto hacia atras
         beq @jdel2
         cmp #$1D        ; derecha
@@ -859,7 +858,7 @@ KCHRIN: lda KDFLTN
 @jder:  jsr KCUROFF
         lda KCOL
         cmp #39
-        bcs @bucle
+        bcs @jb3
         inc KCOL
         jmp @bucle
 @jizq:  jsr KCUROFF
@@ -935,18 +934,10 @@ KCHRIN: lda KDFLTN
         jmp @mul
 @mulok: ; copiar fila de inicio: columnas KLSTRT2..39
         ldx #$00        ; X = longitud en KLINE
+        stx KLQ         ; fuera de comillas al empezar
         ldy KLSTRT2
 @cp1:   lda (KVPTR),Y
-        and #$7F
-        cmp #$20
-        bcc @k1a        ; sc 0-31 -> PETSCII $41-$5F
-        cmp #$40
-        bcc @k1         ; sc $20-$3F: identico
-        clc
-        adc #$80        ; sc $40-$7E -> PETSCII $C0+ (mayus/graficos)
-        jmp @k1
-@k1a:   clc
-        adc #$40
+        jsr KSC2P
 @k1:    sta KLINE,X
         inx
         iny
@@ -968,16 +959,7 @@ KCHRIN: lda KDFLTN
         inc KVPTR+1
 @c2:    ldy #$00
 @cp2:   lda (KVPTR),Y
-        and #$7F
-        cmp #$20
-        bcc @k2a        ; sc 0-31 -> PETSCII $41-$5F
-        cmp #$40
-        bcc @k2         ; sc $20-$3F: identico
-        clc
-        adc #$80        ; sc $40-$7E -> PETSCII $C0+ (mayus/graficos)
-        jmp @k2
-@k2a:   clc
-        adc #$40
+        jsr KSC2P
 @k2:    sta KLINE,X
         inx
         iny
@@ -1000,11 +982,45 @@ KCHRIN: lda KDFLTN
         sta KLPOS
         jmp @servir
 
+; codigo de pantalla (A) -> PETSCII (A) al leer la linea. Dentro de
+; comillas, un caracter invertido es un control escrito en modo comillas
+; ($80-$9F -> $00-$1F, $C0-$DF -> $80-$9F); fuera, el inverso se ignora.
+KSC2P:  cmp #$22
+        bne @n
+        inc KLQ         ; comilla: conmuta (bit0)
+        rts
+@n:     cmp #$80
+        bcc @norm
+        pha
+        lda KLQ
+        lsr a
+        pla
+        bcc @norm       ; fuera de comillas
+        and #$7F
+        cmp #$20
+        bcc @r          ; control $00-$1F
+        cmp #$40
+        bcc @norm2
+        cmp #$60
+        bcs @norm2
+        adc #$40        ; $40-$5F -> control $80-$9F (C=0)
+@r:     rts
+@norm:  and #$7F
+@norm2: cmp #$20
+        bcc @a40        ; sc 0-31 -> PETSCII $41-$5F
+        cmp #$40
+        bcc @r          ; sc $20-$3F: identico
+        adc #$7F        ; sc $40-$7E -> PETSCII $C0+ (C=1: +$80)
+        rts
+@a40:   adc #$40        ; (C=0)
+        rts
+
 ; apagar el cursor si esta invertido (auxiliar del editor)
 KCUROFF:
         pha
         lda KBLON
         beq @no
+        php             ; (CHROUT la llama con IRQ ya enmascaradas)
         sei
         tya
         pha
@@ -1024,7 +1040,7 @@ KCUROFF:
         sta KBLON
         pla
         tay
-        cli
+        plp
 @no:    pla
         rts
 
@@ -1036,29 +1052,30 @@ KCUROFF:
 ; Antes estaba en $033C (buffer de cinta, 828): cada linea tecleada
 ; machacaba las rutinas de usuario que se cargan ahi (POKE + SYS 828).
 KLINE   = $0200
-KLLEN   = $02EA
-KLPOS   = $02EB
-KLSTART = $02EC
-KLROW   = $02ED         ; (2 bytes)
-KLLAST  = $02EF
+KLLEN   = $C8
+KLPOS   = $CE
+KLSTART = $CA
 KCOLOR  = $0286         ; color actual del cursor/texto
 KGDCOL  = $0287         ; color guardado bajo el cursor (ubicacion C64)
 KMBOT   = $0281         ; inicio de memoria (2 bytes)
 KMTOP   = $0283         ; tope de memoria (2 bytes)
 
-KRVS    = $02DF         ; flag de inverso ($00/$80)
-KCTRL   = $02E0
-KCBM    = $02E1
-KCASE   = $02E2         ; flanco de SHIFT+C=
-KLNK    = $02C0         ; tabla de enlace de lineas (25 bytes, $02C0-$02D8)
-KROW    = $02D9         ; fila del cursor 0-24
-KEDROW  = $02DA         ; fila donde empezo la entrada
-KSROW   = $02DB         ; fila de inicio de la linea logica
-KLSTRT2 = $02DC         ; columna inicial efectiva
-KLNKV   = $02DD         ; valor a estampar en KLNK (inicio/continuacion)
-KCNT    = $02DE
-KSCR0   = $02F0
-KSCRCNT = $02F1
+KRVS    = $C7           ; flag de inverso ($00/$80); direccion documentada (199)
+KQTSW   = $D4           ; modo comillas (bit0); direccion documentada (212)
+KINSRT  = $D8           ; espacios insertados pendientes (modo insercion, 216)
+KLQ     = $F8           ; comillas vistas al leer la linea de pantalla (bit0)
+KCTRL   = $02A4
+KCBM    = $02A5
+KCASE   = $0292         ; flanco de SHIFT+C=
+KLNK    = $D9           ; tabla de enlace de lineas (25 bytes, $D9-$F1, como el C64)
+KROW    = $D6           ; fila del cursor 0-24 (direccion documentada, 214)
+KEDROW  = $C9           ; fila donde empezo la entrada
+KSROW   = $D0           ; fila de inicio de la linea logica
+KLSTRT2 = $D5           ; columna inicial efectiva
+KLNKV   = $F6           ; valor a estampar en KLNK (inicio/continuacion)
+KCNT    = $FA
+KSCR0   = $F7
+KSCRCNT = $F9
 
 ; ------------------------------------------------------------
 ; STOP: Z=1 si RUN/STOP pulsada
@@ -1103,14 +1120,13 @@ KUDTIM: inc KTIME+2
 ;.org $EA31: manejador principal del IRQ (destino por defecto de $0314).
 ; Direccion canonica: los programas encadenan su IRQ con JMP $EA31.
 .org $EA31
-KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
-        jsr KUDTIM
+KIRQ:   jsr KUDTIM
         jsr KSCNKEY
         ; --- parpadeo del cursor (solo si se espera entrada) ---
         lda KBLSW
-        beq @nobl
+        beq @ack
         dec KBLCNT
-        bne @nobl
+        bne @ack
         lda #20
         sta KBLCNT
         ; puntero a la RAM de color de la celda del cursor
@@ -1132,12 +1148,16 @@ KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
         sta (KCPTR),Y
         lda #$01
         sta KBLON
-        bne @nobl
+        bne @ack
 @apag:  lda KGDCOL      ; apagar: restaurar el color guardado
         sta (KCPTR),Y
         lda #$00
         sta KBLON
-        jmp @nobl
+        jmp @ack        ; (entre aqui y $EA7E hay relleno: no caer por el)
+; $EA7E: reconocer la interrupcion del CIA1 y salir. Los manejadores de
+; raster que no quieren el trabajo del KERNAL terminan con JMP $EA7E.
+.org $EA7E
+@ack:   lda $DC0D
 ; $EA81: salida canonica del IRQ (restaurar Y/X/A y RTI). Los programas
 ; que no quieren el trabajo del KERNAL salen por JMP $EA81.
 .org $EA81
@@ -1148,6 +1168,80 @@ KIRQ:   lda $DC0D       ; reconocer la interrupcion del CIA1
         pla
         rti
 .org $EA87
+
+; ------------------------------------------------------------
+; scroll de una linea hacia arriba
+; Los bloques se copian SECUENCIALMENTE y completos: entrelazar
+; las paginas con un mismo indice corrompe los 40 bytes que el
+; bloque siguiente pisa antes de que el anterior los lea.
+; ------------------------------------------------------------
+KSCROLL:
+        inc KSCRCNT     ; contador global (ajuste del editor)
+        ldx #$00
+@s1:    lda SCREEN+40,X
+        sta SCREEN,X
+        inx
+        bne @s1
+@s2:    lda SCREEN+$100+40,X
+        sta SCREEN+$100,X
+        inx
+        bne @s2
+@s3:    lda SCREEN+$200+40,X
+        sta SCREEN+$200,X
+        inx
+        bne @s3
+@s4:    lda SCREEN+$300+40,X
+        sta SCREEN+$300,X
+        inx
+        cpx #<(1000-40-$300)
+        bne @s4
+        ldx #39         ; limpiar ultima fila
+        lda #$20
+@s5:    sta SCREEN+960,X
+        dex
+        bpl @s5
+        ; cursor a inicio de la ultima fila
+        lda #<(SCREEN+960)
+        sta KPNT
+        lda #>(SCREEN+960)
+        sta KPNT+1
+        ; --- desplazar la RAM de color igual que la pantalla ---
+        ldx #$00
+@cs1:   lda COLOR+40,X
+        sta COLOR,X
+        inx
+        bne @cs1
+@cs2:   lda COLOR+$100+40,X
+        sta COLOR+$100,X
+        inx
+        bne @cs2
+@cs3:   lda COLOR+$200+40,X
+        sta COLOR+$200,X
+        inx
+        bne @cs3
+@cs4:   lda COLOR+$300+40,X
+        sta COLOR+$300,X
+        inx
+        cpx #<(1000-40-$300)
+        bne @cs4
+        ldx #39         ; ultima fila de color = color actual
+        lda KCOLOR
+@cs5:   sta COLOR+960,X
+        dex
+        bpl @cs5
+        ; desplazar la tabla de enlace una fila hacia arriba
+        ldx #$00
+@shk:   lda KLNK+1,X
+        sta KLNK,X
+        inx
+        cpx #24
+        bne @shk
+        lda #$80        ; la nueva fila inferior inicia linea (por defecto)
+        sta KLNK+24
+        lda #24
+        sta KROW
+        rts
+
 
 
 
@@ -1219,13 +1313,13 @@ KVECTOR:
         bpl @v
         rts
 
-KBLCNT  = $02AC
-KBLON   = $02AD
-KBLSW   = $02AE
-KLCOL   = $02AF
-KLMASK  = $02B8
-KLIDX   = $02B9
-KRPT    = $02BA
+KBLCNT  = $CD           ; cuenta del parpadeo (documentado)
+KBLON   = $CF           ; cursor encendido (documentado)
+KBLSW   = $9F
+KLCOL   = $028C
+KLMASK  = $028E
+KLIDX   = $9E
+KRPT    = $028B         ; contador de repeticion (KOUNT)
 
 KSTUB:  clc
         rts
@@ -1601,12 +1695,12 @@ KSERIN: txa
         tya
         pha
         jsr KACPTR
-        sta KTMP3
+        sta KSERT       ; (no KTMP3: la usa el IRQ del teclado)
         pla
         tay
         pla
         tax
-        lda KTMP3
+        lda KSERT
         clc
         rts
 
@@ -2426,7 +2520,10 @@ tsstart=$039E       ; inicio guardado por tape_save (el bloque de cabecera macha
 wpadn=$03A4         ; bytes de relleno ($20) que faltan tras los datos
 wpad0=$03A5         ; relleno de cada copia (cabecera: 192-21; datos: 0)
 wedge=$03A6         ; 0 = la siguiente IRQ es la bajada (mitad), 1 = la subida
-wneed=$03A7         ; el manejador consumio wnext: el bucle debe preparar otro
+wqh=$03A7           ; cola de pulsos: indice de lectura (manejador)
+wqt=$03AB           ; cola de pulsos: indice de escritura (bucle principal)
+wqlo=$03AC          ; cola de pulsos (4 huecos, lo)
+wqhi=$03B0          ; cola de pulsos (4 huecos, hi)
 wlast=$03A8         ; el pulso en curso es el ultimo del bloque
 calcnt=$03A9        ; pulsos de guia hasta el siguiente recalculo de umbrales
 calok=$03AA         ; ya hay umbrales calculados con esta guia (1) o no (0)
@@ -2622,10 +2719,7 @@ tl_restore:
         sta $DC0D           ; limpiar habilitaciones CIA1
         lda #$81
         sta $DC0D           ; re-habilitar timer A (jiffy)
-        lda tsav
-        sta $0314
-        lda tsav+1
-        sta $0315
+        jsr t_cinv
         lda $01
         ora #$20            ; motor off
         sta $01
@@ -3270,23 +3364,41 @@ tape_wblock:
         lda $DC0D           ; limpiar flags pendientes
         lda #$82
         sta $DC0D           ; habilitar IRQ de Timer B
-        jsr wgen            ; precomputar pulso 1
         lda #$00
-        sta wneed
+        sta wqh
+        sta wqt             ; cola de pulsos vacia
         cli
+; El bucle principal llena una cola de 3 pulsos por delante; el manejador
+; la vacia. Un pulso puede costar mas de calcular que lo que dura (inicio
+; de byte, cambio de copia), y con la cola esos picos no llegan al timer.
 ws_wait:
         lda wfin
         bne ws_fin
-        lda wneed
-        beq ws_wait
-        lda #$00
-        sta wneed
-        jsr wgen            ; el manejador consumio wnext: preparar el siguiente
+        lda wdone
+        bne ws_wait         ; ya no hay mas pulsos que calcular
+        ldx wqt
+        inx
+        txa
+        and #$03
+        cmp wqh
+        beq ws_wait         ; cola llena
+        jsr wgen
+        lda wdone
+        bne ws_wait
+        ldx wqt
+        lda wnext
+        sta wqlo,x
+        lda wnext+1
+        sta wqhi,x
+        inx
+        txa
+        and #$03
+        sta wqt             ; publicar despues de escribir el pulso
         jmp ws_wait
 ws_fin:
         lda #$02
         sta $DC0D           ; deshabilitar IRQ de Timer B
-        lda tsav
+t_cinv: lda tsav
         sta $0314           ; restaurar CINV
         lda tsav+1
         sta $0315
@@ -3301,16 +3413,21 @@ whandler:
         and #$F7
         sta $01
         inc wedge
-        lda wdone
-        bne wh_lastp        ; no hay pulso siguiente: el latch sigue con esta mitad
-        lda wnext
+        ldx wqh
+        cpx wqt
+        beq wh_vacia
+        lda wqlo,x
         sta $DC06
-        lda wnext+1
+        lda wqhi,x
         sta $DC07           ; latch = mitad del pulso siguiente (vale en la subida)
-        inc wneed
+        inx
+        txa
+        and #$03
+        sta wqh
         jmp wh_rti
-wh_lastp:
-        sta wlast
+wh_vacia:
+        lda wdone           ; cola vacia: si no hay mas pulsos, este es el
+        sta wlast           ; ultimo y el latch sigue con su mitad
         jmp wh_rti
 wh_bound:
         lda $01             ; fin del pulso: subida (empieza el siguiente)
@@ -3352,18 +3469,12 @@ wg_n3:
 wg_end:
         lda whalf
         bne wg_end1
-        lda #<WL            ; marcador de fin: mitad 0 -> L
-        sta wnext
-        lda #>WL
-        sta wnext+1
-        lda #$01
-        sta whalf
-        rts
+        inc whalf
+        ldy #$02            ; marcador de fin: mitad 0 -> L
+        jmp wemit
 wg_end1:
-        lda #<WS            ; marcador de fin: mitad 1 -> S
-        sta wnext
-        lda #>WS
-        sta wnext+1
+        ldy #$00            ; marcador de fin: mitad 1 -> S
+        jsr wemit
         ; copia terminada: si era la copia 1, encadenar la copia 2
         lda wcopy
         cmp #$01
@@ -3395,10 +3506,8 @@ wg_alldone:
         sta whalf
         rts
 wg_leader:
-        lda #<WS
-        sta wnext
-        lda #>WS
-        sta wnext+1
+        ldy #$00
+        jsr wemit           ; guia: pulsos cortos
         lda wlcnt
         bne wg_l1
         dec wlcnt+1
@@ -3439,98 +3548,36 @@ wsb_c3:
         sta wcdcnt
         ora wcmask
         sta wcur            ; primer byte de countdown = 9 | mascara
-        jsr wcalcpar
-        lda #$00
-        sta wsym
-        sta whalf
-        rts
+        jmp wnewbyte
 
-; wnext = pulso del simbolo actual (wsym, whalf) del byte wcur (paridad wpar)
+; wnext = pulso del simbolo actual (wsym, whalf) del byte wcur (paridad wpar).
+; Simbolos: marcador [L,M], bit 0 [S,M], bit 1 [M,S]. Indice en wpsym =
+; tipo*2 + mitad (tipo 0 marcador, 1 bit 0, 2 bit 1).
 wbytepulse:
         lda wsym
-        bne wbp_notmark
-        lda whalf           ; wsym==0: marcador [L,M]
-        bne wbp_m1
-        lda #<WL
-        sta wnext
-        lda #>WL
-        sta wnext+1
-        rts
-wbp_m1:
-        lda #<WM
-        sta wnext
-        lda #>WM
-        sta wnext+1
-        rts
-wbp_notmark:
+        beq wbp_mark        ; 0: marcador (A=0)
         cmp #$09
         beq wbp_par
-        ldx wsym            ; wsym 1..8: bit (wsym-1) de wcur
-        dex
+        tax                 ; 1..8: bit (wsym-1) de wcur
         lda wcur
-wbp_sh:
-        dex
-        bmi wbp_shd
+wbp_sh: dex
+        beq wbp_bit
         lsr a
         jmp wbp_sh
-wbp_shd:
-        and #$01
-        beq wbp_b0
-        lda whalf           ; bit==1: dipolo(1)=[M,S]
-        bne wbp_b1h1
-        lda #<WM
-        sta wnext
-        lda #>WM
-        sta wnext+1
-        rts
-wbp_b1h1:
-        lda #<WS
-        sta wnext
-        lda #>WS
-        sta wnext+1
-        rts
-wbp_b0:
-        lda whalf           ; bit==0: dipolo(0)=[S,M]
-        bne wbp_b0h1
-        lda #<WS
-        sta wnext
-        lda #>WS
-        sta wnext+1
-        rts
-wbp_b0h1:
-        lda #<WM
-        sta wnext
-        lda #>WM
-        sta wnext+1
-        rts
 wbp_par:
-        lda wpar            ; wsym==9: dipolo(wpar)
-        beq wbp_p0
-        lda whalf           ; par==1: [M,S]
-        bne wbp_p1h1
-        lda #<WM
+        lda wpar            ; 9: bit de paridad
+wbp_bit:
+        and #$01
+        asl a
+        adc #$02            ; bit 0 -> 2, bit 1 -> 4 (C=0 tras el ASL)
+wbp_mark:
+        ora whalf
+        tax
+        ldy wpsym,x         ; 0 = S, 1 = M, 2 = L
+; wnext = pulso Y (0 corto, 1 medio, 2 largo)
+wemit:  lda wplo,y
         sta wnext
-        lda #>WM
-        sta wnext+1
-        rts
-wbp_p1h1:
-        lda #<WS
-        sta wnext
-        lda #>WS
-        sta wnext+1
-        rts
-wbp_p0:
-        lda whalf           ; par==0: [S,M]
-        bne wbp_p0h1
-        lda #<WS
-        sta wnext
-        lda #>WS
-        sta wnext+1
-        rts
-wbp_p0h1:
-        lda #<WM
-        sta wnext
-        lda #>WM
+        lda wphi,y
         sta wnext+1
         rts
 
@@ -3567,11 +3614,7 @@ wba_cd:
         lda wcdcnt          ; siguiente byte de countdown
         ora wcmask
         sta wcur
-        jsr wcalcpar
-        lda #$00
-        sta wsym
-        sta whalf
-        rts
+        jmp wnewbyte
 wba_cd2data:
         lda #$01
         sta wbph
@@ -3599,24 +3642,17 @@ wba_putbyte:
         eor wchk
         sta wchk            ; wchk ^= byte
 wba_nd:
-        jsr wcalcpar
-        lda #$00
-        sta wsym
-        sta whalf
-        rts
+        jmp wnewbyte
 wba_tochk:
         lda #$02
         sta wbph
         lda wchk
         sta wcur            ; byte de checksum
-        jsr wcalcpar
-        lda #$00
-        sta wsym
-        sta whalf
-        rts
+        jmp wnewbyte
 
-; wpar = paridad impar de wcur (1 XOR popcount-paridad), sin destruir wcur
-wcalcpar:
+; wnewbyte: wpar = paridad impar de wcur (1 XOR popcount-paridad), sin
+; destruir wcur, y simbolo/mitad a cero (el byte empieza por su marcador)
+wnewbyte:
         lda wcur
         ldx #$08
         ldy #$00            ; Y = cuenta de bits a 1
@@ -3631,6 +3667,9 @@ wcp_s:
         and #$01            ; popcount mod 2
         eor #$01            ; paridad impar = 1 XOR (popcount mod 2)
         sta wpar
+        lda #$00            ; empezar el byte por su marcador
+        sta wsym
+        sta whalf
         rts
 
 ; ------------------------------------------------------------
@@ -3760,6 +3799,9 @@ ts_pau: dex
 
 
 
+; (tabla del editor en el hueco del final de esta seccion)
+KSRTAB: .byte "LOAD",$0D,"RUN",$0D,$00
+
 .org $FCE2
 
 ; ------------------------------------------------------------
@@ -3784,6 +3826,10 @@ KRESET: sei
         jsr KCINT       ; editor de pantalla y teclado
         cli
         jmp INIT        ; arranque en frio del BASIC
+
+; (tablas en el hueco libre de esta isla)
+wpsym:  .byte 2,1, 0,1, 1,0
+KBITS:  .byte $01,$02,$04,$08,$10,$20,$40,$80
 
 .org $FD15
 
@@ -3968,6 +4014,9 @@ KIOM4:  .byte "FILE NOT FOUND",0
 KIOM6:  .byte "NOT INPUT FILE",0
 KERA22: .byte "ILLEGAL DIRECT",0
 
+; (tabla del teclado en el hueco libre de esta isla)
+KRPTSET: .byte $20,$1D,$9D,$11,$91,$14,$94
+
 .org $FD23
 KERA32: .byte "CAN'T CONTINUE",0
 KIOM3:  .byte "FILE NOT OPEN",0
@@ -3976,6 +4025,9 @@ KERA12: .byte "OUT OF MEMORY",0
 .org $FF5E
 KERA16: .byte "BAD SUBSCRIPT",0
 KERA18: .byte "REDIM'D ARRAY",0
+; (tabla de pulsos de cinta en el hueco libre de esta isla)
+wplo:   .byte <WS,<WM,<WL
+wphi:   .byte >WS,>WM,>WL
 ;;; ISLAS-FIN
 
 .org $FF5B

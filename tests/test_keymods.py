@@ -17,9 +17,9 @@ def emite(teclas_set):
     t = set()
     mq = Maquina(teclas_matriz=t)
     for i in range(16):
-        mq.mem.write(0x02B0 + i, [0])
-    for a in (0xC6, 0x02AB, 0x02AF, 0x02B8, 0x02B9, 0x02BA,
-              0x02E0, 0x02E1, 0x02E2):
+        mq.mem.write(0x0293 + i, [0])
+    for a in (0xC6, 0x02A3, 0x028C, 0x028E, 0x9E, 0x028B,
+              0x02A4, 0x02A5, 0x0292):
         mq.mem.write(a, [0])
     t.update(teclas_set)
     mq.subrutina(SCN)
