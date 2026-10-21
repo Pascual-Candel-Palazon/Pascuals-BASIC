@@ -28,7 +28,7 @@ Leyenda:
 | SYS -> KSYS | VICE + MECH | Borde arcoiris por SYS; KSYS reubicado tras detectar ensamblado fuera de $FFFF. |
 | candado anti-PEEK eliminado | TEST + VICE | test_basic: PEEK($A000) devuelve el byte real de la ROM (el candado daba 0). Era 117 al escribir esta tabla; desde 6332db5 $A000 guarda el vector frio del BASIC y vale 138. El test lee el valor esperado de la propia imagen. |
 | FPWRT JEQ | MECH | Forzado por error real de rango del ensamblador. |
-| fixup DEL en INLIN | **DEAD** | El editor de pantalla consume DEL antes de servir la linea; INLIN ya nunca ve $14. Codigo obsoleto, inofensivo. Candidato a retirar. |
+| fixup DEL en INLIN | **RETIRADO** (21 oct) | No era inofensivo: INLIN si ve $14 cuando es un caracter de verdad (DEL incrustado con INST en comillas, o un byte de un fichero en INPUT#). Con la 1541 en VICE, INPUT# de "AB"+CHR$(20)+"CD" daba "ACD"; el C64 da los 5. Con el teclado no se notaba porque CHRIN de pantalla devuelve X con su propio indice. CONTINUIDAD sec. 20. |
 
 
 ## Subsistemas del KERNAL
@@ -66,7 +66,7 @@ A efectos del repo actual cuenta como GAP.
 | Cinta: LOAD, matching, mensajes, STOP, VERIFY, fusion de copias, velocidad adaptativa, SAVE, timeout | PERDIDO | Todo verificado con un modelo py65 de Timer B + FLAG y tests (test_leader_corto, test_e2e_basic, test_merge_chars, test_namematch...) que no estan en el repo. Hoy: GAP, unas 1000 lineas sin test automatico. |
 | Tabla CTRL, simbolos C=, F1-F8, SHIFT+RUN/STOP | TEST | test_keymods (64 casos). |
 | SETTMO ($FFA2) | TEST | test_vectores. |
-| Guarda de BLOAD (<2 bytes) | **GAP** | 43f1eba: "pendiente de validacion en VICE". Nunca se cerro. |
+| Guarda de BLOAD (<2 bytes) | VICE (21 oct) | Con un PRG de 1 byte sobre un programa viejo: nuestra ROM deja un programa vacio y estable; la original resucita el programa viejo al reenlazar memoria rancia y se cuelga despues. CONTINUIDAD sec. 20. |
 | KUNLSN (recarga de $3F) | VICE + PERDIDO | Verificado en simulacion dual C64+1541 y en VICE; ninguno de los dos arneses esta en el repo. |
 
 
@@ -93,6 +93,7 @@ A efectos del repo actual cuenta como GAP.
 | CLR devolvia el texto a azul claro | VICE (ROM original) + TEST | El C64 conserva 646 y pinta la RAM de color con el. |
 | 650: repeticion de todas / ninguna | TEST | Bits 7 y 6. tests/test_repeticion.py. |
 | 648: el editor escribia siempre en $0400 | TEST + VICE (ROM original) | Base de pantalla, limites del cursor, color y scroll siguen a 648. tests/test_pagina648.py. |
+| CHKIN/CHKOUT devolvian en X el indice de la tabla | TEST + VICE (ROM original) | El BASIC hace STX CHANNL: con el primer fichero abierto CHANNL quedaba a 0 e INPUT# escribia "? ". tests/test_canales.py. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria
@@ -107,7 +108,8 @@ A efectos del repo actual cuenta como GAP.
    ahora las direcciones del C64 (TXTTAB en $2B, MEMSIZ en $37, TXTPTR
    en $7A). tests/test_zp_basic.py.
 
-2. **fixup DEL en INLIN es codigo muerto** (ver arriba).
+2. **fixup DEL en INLIN es codigo muerto** (ver arriba). **RETIRADO**: no
+   era muerto del todo (CONTINUIDAD.md sec. 20).
 
 3. **El editor usa el buffer de cinta ($033C, 828) como buffer de
    linea** (`KLINE`). Encontrado en la auditoria del 20 oct: cualquier
