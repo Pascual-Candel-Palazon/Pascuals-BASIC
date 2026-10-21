@@ -113,7 +113,8 @@ KIOINIT:
 KRAMTAS:
         lda #$00
         tax
-@rt1:   sta $0002,X     ; pagina cero (sin tocar el puerto 6510)
+@rt1:   sta a:$0002,X   ; $0002-$0101. 'a:' fuerza modo absoluto: en modo
+                        ; pagina cero,X el indice da la vuelta y pisaba $00/$01
         inx
         bne @rt1
 @rt2:   sta $0200,X     ; pagina 2 (bufers)
@@ -1421,22 +1422,6 @@ KPLOT:  bcc @set
 KIOBASE:
         ldx #$00
         ldy #$DC
-        rts
-; SETTIM ($FFDB): fijar el reloj jiffy (A/X/Y = medio/...)
-KSETTIM:
-        sei
-        sta KTIME+2
-        stx KTIME+1
-        sty KTIME
-        cli
-        rts
-; RDTIM ($FFDE): leer el reloj jiffy
-KRDTIM:
-        sei
-        lda KTIME+2
-        ldx KTIME+1
-        ldy KTIME
-        cli
         rts
 ; CLRCHN ($FFCC): canales de E/S a por defecto (teclado in, pantalla out)
 KCLRCHN:
@@ -3543,7 +3528,9 @@ wbp_m1:
         rts
 wbp_notmark:
         cmp #$09
-        beq wbp_par
+        bne wbp_np
+        jmp wbp_par         ; wbp_par vive en el hueco $FD53 (ver abajo)
+wbp_np:
         ldx wsym            ; wsym 1..8: bit (wsym-1) de wcur
         dex
         lda wcur
@@ -3582,6 +3569,24 @@ wbp_b0h1:
         lda #>WM
         sta wnext+1
         rts
+
+
+; ------------------------------------------------------------
+; Tabla de saltos estandar documentada
+; ------------------------------------------------------------
+; ------------------------------------------------------------
+; Trampolines de compatibilidad en las direcciones INTERNAS
+; documentadas que muchos cartuchos y programas llaman directamente
+; (en vez de la tabla de saltos). Honran una interfaz publicada;
+; no contienen codigo derivado de la ROM original.
+; ------------------------------------------------------------
+.org $FD15
+        jmp KRESTOR     ; RESTOR interno
+.org $FD50
+        jmp KRAMTAS     ; RAMTAS interno
+
+; --- emision del pulso de paridad (escritura de cinta), en el hueco
+;     $FD53-$FDA2: no cabia antes del trampolin de $FD15 ---
 wbp_par:
         lda wpar            ; wsym==9: dipolo(wpar)
         beq wbp_p0
@@ -3612,21 +3617,23 @@ wbp_p0h1:
         lda #>WM
         sta wnext+1
         rts
-
-
-; ------------------------------------------------------------
-; Tabla de saltos estandar documentada
-; ------------------------------------------------------------
-; ------------------------------------------------------------
-; Trampolines de compatibilidad en las direcciones INTERNAS
-; documentadas que muchos cartuchos y programas llaman directamente
-; (en vez de la tabla de saltos). Honran una interfaz publicada;
-; no contienen codigo derivado de la ROM original.
-; ------------------------------------------------------------
-.org $FD15
-        jmp KRESTOR     ; RESTOR interno
-.org $FD50
-        jmp KRAMTAS     ; RAMTAS interno
+; SETTIM/RDTIM tambien viven en este hueco (liberan sitio antes de $FD15)
+; SETTIM ($FFDB): fijar el reloj jiffy (A/X/Y = medio/...)
+KSETTIM:
+        sei
+        sta KTIME+2
+        stx KTIME+1
+        sty KTIME
+        cli
+        rts
+; RDTIM ($FFDE): leer el reloj jiffy
+KRDTIM:
+        sei
+        lda KTIME+2
+        ldx KTIME+1
+        ldy KTIME
+        cli
+        rts
 .org $FDA3
         jmp KIOINIT     ; IOINIT interno
 
