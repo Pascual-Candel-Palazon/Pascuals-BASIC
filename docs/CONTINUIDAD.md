@@ -735,7 +735,7 @@ algunos commits queda corregido aqui:
 | b876e1c | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
 | 4207426 | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (60a09ac, af65a4e) con los tres commits hechos en la web; sin conflictos. |
 | rama fix-bload-guard | | Ya fusionada (PR #1). Se puede borrar en GitHub. |
-| 726cbda | "Implementar SHIFT+RUN/STOP" | Sin saberlo, empujo el codigo por encima de $FD15 y rompio el SAVE de cinta (corregido el 21 oct en 61b3db5). |
+| 726cbda | "Implementar SHIFT+RUN/STOP" | Sin saberlo, empujo el codigo por encima de $FD15 y rompio el SAVE de cinta (corregido el 21 oct en 930c9b9). |
 
 ---
 
