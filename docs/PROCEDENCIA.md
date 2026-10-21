@@ -39,7 +39,16 @@ usan solo las partes de nivel A/B y se anota.
    anotados: (a) VICE las trae de serie y la ROM del 1541 se usa como
    periférico opaco emulado para probar el bus IEC; (b) la auditoría
    ciega del 20 oct 2026 (`docs/AUDITORIA_SIMILITUD.md`), en la que un
-   script lee la ROM y el operador solo ve métricas.
+   script lee la ROM y el operador solo ve métricas; (c) la prueba de
+   cinta del 21 oct 2026: la ROM original corrió en VICE como caja negra,
+   igual que un C64 de referencia, para grabar un programa de prueba a un
+   TAP y para cargar los TAP grabados con este KERNAL. Solo se observó el
+   comportamiento (la forma de onda grabada y la pantalla), que es nivel
+   B; no se miró su código. De esa grabación se midieron las longitudes
+   de guía ($6A00, $1500, 79 entre copias, 78 al final) y el relleno de
+   la cabecera, que coinciden con el formato publicado. La cinta grabada
+   no está en el repositorio: los tests usan `tests/tapgen.py`, escrito
+   desde el formato publicado.
 3. El historial de desarrollo (sesiones, commits, bugs corregidos) se
    conserva como evidencia de creación independiente. Los errores de
    primera escritura son huellas de autoría.
@@ -98,8 +107,9 @@ posteriori porque solo el autor puede decir qué fuente se usó.
 Algunos cartuchos y programas llaman a rutinas del kernal en sus
 DIRECCIONES INTERNAS fijas de la ROM original ($FDA3 IOINIT, $FD50
 RAMTAS, $FD15 RESTOR, $FF5B CINT...) en vez de la tabla de saltos
-documentada. Colocamos en esas direcciones pequenos trampolines (JMP a
-nuestra implementacion). Justificacion clean-room: esas direcciones son
+documentada. Colocamos en esas direcciones nuestra implementacion
+(desde el tier-3 de octubre, directamente; solo CINT en $FF5B sigue siendo
+un trampolin, JMP a nuestra rutina, porque no cabe en su hueco). Justificacion clean-room: esas direcciones son
 INTERFAZ PUBLICADA (figuran como puntos de entrada en referencias como
 "Mapping the C64"); honrar una direccion documentada con codigo propio
 es nivel B, no copiar la expresion de Commodore (nivel C). No se

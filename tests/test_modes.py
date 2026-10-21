@@ -19,6 +19,13 @@ def main():
     ok &= caso("inverso ON: A invertida ($81)", hay_screencode(mq, 0x81))
     ok &= caso("inverso OFF: B normal ($02)", hay_screencode(mq, 0x02))
 
+    # El retorno de carro apaga el inverso: PRINT CHR$(18)"A" (CR) y luego
+    # PRINT"Z" sale normal ($1A), como tras el titulo de un LOAD"$"
+    mq = Maquina()
+    mq.teclear(b'PRINTCHR$(18)"A":PRINT"Z"\r', 55_000_000)
+    ok &= caso("CR apaga el inverso: Z normal ($1A) y no invertida ($9A)",
+               hay_screencode(mq, 0x1A) and not hay_screencode(mq, 0x9A))
+
     # Caso: CHR$(14) -> $D018=$17 (minusculas); CHR$(142) -> $15 (mayusc.)
     mq = Maquina()
     mq.teclear(b'PRINTCHR$(14)\r', 35_000_000)

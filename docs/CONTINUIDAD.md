@@ -246,6 +246,14 @@ NUNCA el canal IEC. Usar `$F0|SA`/`$60|SA` rompe el LOAD (manda canal 1).
 
 ### LOAD de cinta (datasette, dispositivo 1): IMPLEMENTADO y VERIFICADO
 
+> **Superado el 21 oct 2026.** Esta subseccion y la de SAVE describen la
+> version de julio. La prueba en VICE contra un C64 real (seccion 15)
+> mostro que no leia cintas reales ni grababa en el formato real; lo de
+> "verificado contra valores reales" y la tolerancia [-10 %, +45 %] se
+> midieron con un arnes que reproducia lo mismo que grababa. El estado
+> actual esta en la seccion 15.
+
+
 Decode clean-room del formato CBM de cinta, verificado end-to-end
 (`LOAD"",1` + `RUN` carga y ejecuta un programa, comprobado en py65 con un
 modelo del Timer B del CIA1 + interrupcion FLAG).
@@ -359,6 +367,14 @@ modelo del Timer B del CIA1 + interrupcion FLAG).
   (reenlace correcto a $080B), sin regresion en merge/STOP/VERIFY/namematch.
 
 ### SAVE de cinta: ESCRITURA completa, integrada en KSAVE (HECHO y VERIFICADO)
+
+> **Superado el 21 oct 2026.** Esta subseccion y la de SAVE describen la
+> version de julio. La prueba en VICE contra un C64 real (seccion 15)
+> mostro que no leia cintas reales ni grababa en el formato real; lo de
+> "verificado contra valores reales" y la tolerancia [-10 %, +45 %] se
+> midieron con un arnes que reproducia lo mismo que grababa. El estado
+> actual esta en la seccion 15.
+
 
 El espejo del decode de LOAD: la maquina de estados que EMITE los pulsos de un
 bloque CBM completo (2 copias). YA esta conectada: `tape_save` escribe un
@@ -786,3 +802,92 @@ adaptativa): no hizo falta recortarla. Lo de agosto no cabia porque se
 intentaba meter la cinta como bloque contiguo en un hueco; ahora se
 movieron otras cosas (cadenas) a los huecos pequenos.
 
+
+## 15. Prueba en VICE y cinta real (21 oct 2026)
+
+Las ROMs se probaron en VICE 3.10 (x64sc) sin pantalla: `xvfb-run`,
+`-keybuf` con el texto en minusculas, `-limitcycles` y
+`-exitscreenshot`. Para la cinta: `-1 fichero.tap`, `+virtualdev1` y
+`-moncommands` con `tapectrl 4` (grabar) o `tapectrl 1` (reproducir).
+Para el disco: `-drive8truedrive +virtualdev8` y la ROM del 1541 como
+periferico opaco.
+
+Funcionaban ya:
+- arranque;
+- BRK con arranque en caliente;
+- SYS 64738;
+- IRQ encadenada por $EA31;
+- NMI de usuario por $0318;
+- disco 1541 (SAVE, VERIFY, `LOAD"$",8`, LOAD y RUN).
+
+La cinta NO funcionaba con un C64 real. Como C64 de referencia se uso la
+ROM original en VICE, como caja negra (ver `docs/PROCEDENCIA.md`, regla 2,
+uso c). Fallos:
+
+1. **Lector demasiado lento.** El manejador de FLAG tardaba unos 398
+   ciclos por pulso y el pulso corto real dura unos 376: iba perdiendo
+   pulsos y las medidas salian corridas. Los tests no lo veian porque
+   nuestro grabador generaba pulsos mas largos (ver 2) y el arnes
+   reproducia lo mismo que grababa.
+2. **Grabador con otra forma de onda.** Emitia un flanco por pulso. En el
+   formato CBM cada pulso es un ciclo completo de la linea, de subida a
+   subida, asi que las cintas salian al doble de duracion y con pulsos
+   mezclados.
+3. **Formato recortado.** Cabecera de 21 bytes en vez de 192, y guias de
+   20 a 40 pulsos.
+4. **Variables solapadas.** `qd` y `tpulse` compartian $0384.
+
+Arreglos en `src/kernal.s`:
+- **Lector (HDLR).** Camino comun de unos 200 ciclos. La calibracion con
+  la guia solo mide: media exponencial de 1/4, umbrales recalculados cada
+  16 pulsos de guia, y el marcador solo cierra la guia tras 16 pulsos
+  seguidos dentro de banda. Se recupera solo de ruido al arrancar el
+  motor y de la vuelta del timer en una pausa.
+- **Paridad.** Hubo un bug de paridad en la primera version del arreglo:
+  ROR antes de guardar el bit.
+- **Grabador.** Timer B en modo continuo: el CIA recarga del latch, asi
+  que los flancos no dependen del manejador. Subida al empezar el pulso y
+  bajada a la mitad. El bucle principal precalcula el pulso siguiente.
+- **Formato.** Guias de $6A00 y $1500, 79 pulsos entre copias, 78 al
+  final. Cabecera de 192 bytes con relleno $20, tipo 1 o 3 segun SA.
+  Pausa de unos 0,33 s entre la cabecera y los datos, como el C64.
+- **LOAD.** Un fichero de tipo 3 va a su direccion. Ignora bloques que no
+  son de programa. Para en una cabecera de tipo 5.
+- **Pantalla apagada mientras corre la cinta.** Las lineas malas del
+  VIC-II paran la CPU unos 40 ciclos y movian los flancos.
+- **Motor parado mientras se escriben FOUND y LOADING.** CHROUT corre con
+  las IRQ enmascaradas.
+- **Mensaje SEARCHING FOR** tambien en cinta.
+- **Fin+1 de LOAD.** Se calcula despues de parar el IRQ: el IRQ pisaba
+  dlo/dhi.
+
+Encontrado de paso, fuera de la cinta:
+- El retorno de carro no apagaba el modo inverso: tras `LOAD"$",8` y
+  LIST todo salia en inverso. Corregido; test en `tests/test_modes.py`.
+- VERIFY correcto en modo directo ahora escribe OK.
+
+Resultado en VICE:
+- Este KERNAL carga cintas grabadas por un C64 real.
+- Un C64 real carga cintas grabadas por este KERNAL.
+- Las cabeceras grabadas por los dos son identicas byte a byte.
+- VERIFY da OK o ?VERIFY ERROR segun toque.
+
+Tests:
+- `tests/tapgen.py`: modelo del formato en Python, escrito aparte del
+  KERNAL. Genera cintas y decodifica grabaciones.
+- `tests/test_cinta.py` comprueba el formato de lo grabado desde fuera:
+  - bloques, guias, cabecera de 192 bytes y pulsos de 384/528/688
+    ciclos (media exacta; cada pulso +-8, lo que mide un byte de TAP);
+  - LOAD de cintas generadas a velocidad nominal, un 25 % lenta y un 40 %
+    rapida, con ruido;
+  - LOAD en modo directo con pausa;
+  - tipo 3;
+  - fin de cinta.
+- El arnes (`tests/cinta.py`) graba los flancos de subida, sincroniza el
+  latch del timer y modela parar y arrancar el motor.
+
+Diferencias que quedan respecto al C64:
+- La cabecera se guarda en $0362, no en $033C.
+- No hay ficheros de datos en cinta (OPEN 1,1).
+- LIST de BASIC deja un espacio antes del numero de linea (" 10 PRINT")
+  donde el C64 no lo deja. Es del BASIC, pendiente de revisar.
