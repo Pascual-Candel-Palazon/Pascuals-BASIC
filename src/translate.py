@@ -568,6 +568,28 @@ if C64:
     # del editor ($D3, 211). El 198 del fuente era la del PET; en el C64 es
     # el contador del bufer de teclado, y POS(0) devolvia 0.
     _rep("TRMPOS = 198  ", "TRMPOS = 211  ;[C64] columna del cursor ($D3) ")
+    # Delta C64: LINPRT (LIST, " IN nn", BREAK IN, bytes libres) imprime el
+    # numero sin el espacio del signo, como el C64: "10 PRINT", no
+    # " 10 PRINT". FOUT empieza con Y=0, asi que el signo cae en LOFBUF
+    # ($FF, justo antes de FBUFFR en $0100) y la cadena devuelta (FBUFFR)
+    # empieza en la primera cifra. El comentario del propio fuente en LIST
+    # ("PRINT AS INT WITHOUT LEADING SPACE") ya pedia esto.
+    # Delta C64: tras leer una linea de la pantalla no se imprime otro
+    # retorno: el editor del KERNAL ya lo hace al entregar el RETURN. Con
+    # los dos, cada linea tecleada (programa, orden directa, INPUT) dejaba
+    # una linea en blanco debajo, cosa que el C64 no hace.
+    _rep("\t\t;SETUP POINTER.\n\n\tLDA\tCHANNL\t;NO CRDO IF NOT TERMINAL.\n"
+         "\tBNE\tPRTRTS\t\nCRDO:",
+         "\t\t;SETUP POINTER.\n\n\tRTS\t;[C64] el editor ya avanzo de linea\n"
+         "CRDO:")
+    # Delta C64: el C64 separa el mensaje de "ERROR" con dos espacios
+    # ("?SYNTAX  ERROR", "?FILE OPEN  ERROR"); comprobado en VICE con la ROM
+    # original como caja negra.
+    _rep('ERR:\tDT " ERROR" ', 'ERR:\tDT "  ERROR" ;[C64] dos espacios ')
+    _rep("\tJSR\tFLOATC\t\n\tJSR\tFOUT\t\nSTROU2:",
+         "\tJSR\tFLOATC\t\n"
+         "\tLDYI\t0\t;[C64] signo en LOFBUF: sin espacio delante\n"
+         "\tJSR\tFOUTC\t\nSTROU2:")
 # [C64] Banner de arranque: ver la reescritura al estilo C64 al inicio del
 # script (sobre el texto crudo, justo tras leer el fuente). Alli se cambia la
 # marca registrada de Commodore por el nombre propio, se anade la linea en

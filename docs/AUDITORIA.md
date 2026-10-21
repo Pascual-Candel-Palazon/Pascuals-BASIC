@@ -88,6 +88,9 @@ A efectos del repo actual cuenta como GAP.
 | KSERIN y el IRQ compartian KTMP3 | MECH | Carrera: una tecla durante una lectura del bus podia cambiar el byte leido. |
 | Pagina cero del BASIC en las direcciones del C64 | TEST + VICE | TXTTAB estaba en $28 y no en $2B; POKE 43/44 y PEEK(45/46, 55/56) fallaban. Nuevos ADRAY1/ADRAY2 en $03/$05. tests/test_zp_basic.py. |
 | POS, TAB y la coma usaban el contador del teclado | TEST + VICE | TRMPOS=198 (columna del PET). POS(0) daba 0 y la coma/TAB contaban desde 0. Ahora $D3. |
+| LIST con espacio delante del numero; linea en blanco tras cada linea tecleada; "ERROR" con un espacio | VICE (ROM original) + TEST | Salida del BASIC ya identica a la del C64. tests/test_formato.py. |
+| Entradas internas $E544, $E56C, $E716, $E9FF | TEST + VICE | Colocadas con la macro FIJA. tests/test_entradas.py. |
+| CLR devolvia el texto a azul claro | VICE (ROM original) + TEST | El C64 conserva 646 y pinta la RAM de color con el. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

@@ -91,8 +91,13 @@ an opaque peripheral):
   at 122/123, so `POKE 43/44` and CHRGET wedges work. The ADRAY1/ADRAY2
   conversion vectors are at 3/4 and 5/6. POS, TAB and the comma follow the
   cursor column (211).
-- Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
-  `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
+- Internal KERNAL entry points that many programs call directly: clear
+  screen (58692/$E544), set the line pointer from 214/211 (58732/$E56C),
+  print to the screen (59158/$E716) and clear a screen line (59903/$E9FF).
+  BASIC output matches the C64: LIST without a leading space, no blank line
+  after each typed line, and CLR keeps the text color.
+- Long BASIC error messages (C64 style, two spaces before ERROR): `?SYNTAX  ERROR`,
+  `?DIVISION BY ZERO  ERROR`, `?NEXT WITHOUT FOR  ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
 
 The full technical notes (architecture, memory map, build chain,

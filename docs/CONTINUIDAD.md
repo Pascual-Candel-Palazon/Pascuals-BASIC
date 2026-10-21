@@ -887,8 +887,8 @@ Tests:
 Diferencias que quedan respecto al C64:
 - La cabecera se guarda en $0362, no en $033C.
 - No hay ficheros de datos en cinta (OPEN 1,1).
-- LIST de BASIC deja un espacio antes del numero de linea (" 10 PRINT")
-  donde el C64 no lo deja. Es del BASIC, pendiente de revisar.
+- ~~LIST de BASIC deja un espacio antes del numero de linea (" 10 PRINT")
+  donde el C64 no lo deja.~~ Resuelto en la seccion 18.
 
 ## 16. Editor y direcciones documentadas (21 oct 2026)
 
@@ -970,9 +970,9 @@ Queda pendiente:
 - 648 se lee pero no se respeta: el editor sigue escribiendo en $0400 si
   un programa lo cambia.
 - 650 (repeticion) no se usa.
-- Puntos de entrada internos sin colocar ($E544, $E56C, $E716, $E9FF).
+- ~~Puntos de entrada internos sin colocar ($E544, $E56C, $E716, $E9FF).~~ Resuelto en la seccion 18.
 - ~~La pagina cero del BASIC sigue desplazada (TXTTAB en $28).~~ Resuelto en la seccion 17.
-- LIST pone un espacio delante del numero de linea.
+- ~~LIST pone un espacio delante del numero de linea.~~ Resuelto en la seccion 18.
 - Diferencias de cinta de la seccion 15.
 
 
@@ -1022,3 +1022,57 @@ Probado:
   la nuestra, VERIFY bien y mal) y disco (SAVE/VERIFY/`LOAD"$"`/LOAD/RUN)
   siguen bien.
 - Bateria completa en verde (19 tests).
+
+
+## 18. Salida del BASIC como la del C64 y entradas internas del KERNAL (21 oct 2026)
+
+Comparado en VICE con la ROM original como caja negra (misma secuencia de
+teclas en las dos ROMs). Tras los cambios, LIST, RUN, errores y PRINT dan
+la misma pantalla.
+
+BASIC (src/translate.py):
+1. **LIST sin espacio delante del numero.** LINPRT (LIST, " IN nn",
+   BREAK IN, bytes libres del arranque) llama a FOUT con Y=0: el signo cae
+   en LOFBUF ($FF) y la cadena empieza en la primera cifra de FBUFFR
+   ($0100). El propio fuente ya lo pedia en LIST ("PRINT AS INT WITHOUT
+   LEADING SPACE"). Efecto secundario correcto: el arranque queda
+   " 64K RAM SYSTEM  38911" con dos espacios, como el C64 (antes tres).
+2. **Linea en blanco tras cada linea tecleada.** El editor del KERNAL ya
+   imprime el retorno al entregar el RETURN; FININL imprimia otro (CRDO).
+   Afectaba a lineas de programa, ordenes directas e INPUT. FININL vuelve
+   ya sin CRDO.
+3. **"?SYNTAX  ERROR" con dos espacios**, como el C64 (" ERROR" ->
+   "  ERROR"). tests/test_iec_fase2a.py actualizado.
+
+KERNAL (src/kernal.s):
+4. **Entradas internas conocidas** (direcciones y uso de los mapas de
+   memoria publicos, nivel A/B):
+   - $E544 (58692): borrar pantalla, cursor a (0,0). Es KCLS.
+   - $E56C (58732): puntero de linea desde 214/211 (KE56C: PLOT con la
+     fila y columna actuales). `POKE214,F:POKE211,C:SYS58732`.
+   - $E716 (59158): escribir A en pantalla sin mirar el dispositivo de
+     salida (KE716 -> KSCROUT). KCHROUT se ha partido: comprueba el
+     dispositivo y, si es la pantalla, entra en KSCROUT.
+   - $E9FF (59903): borrar la fila X (KCLRLN: espacios y color 646).
+   Se colocan con la macro FIJA (rellena con NOP hasta la direccion y
+   falla si el codigo anterior la ha pasado). Los bloques de la seccion
+   principal ($E200-$EA30) se han reordenado para que encajen.
+5. **CLR conservaba mal el color.** KCLS ponia 646 a azul claro: tras
+   `PRINT CHR$(5)CHR$(147)` el texto volvia a azul. Ahora el color solo se
+   fija en CINT y CLR pinta la RAM de color con el color actual (el C64
+   original da 646=1 y la RAM de color a 1).
+6. **Espacio.** KCLS borra fila a fila con KCLRLN; KROWP (fila -> puntero)
+   sustituye tres multiplicaciones por 40 (PLOT, lectura de la linea,
+   ultima fila del scroll). Las variables del editor que se definian
+   despues de usarse (y por eso se ensamblaban con direccion absoluta) se
+   han subido al principio de la seccion: ahora usan pagina cero. En total
+   se ganaron unos 130 bytes, de los que ~97 se van en el relleno de las
+   cuatro direcciones fijas. KERNAL libre: 65 bytes. BASIC ($A000): 19.
+
+Probado:
+- tests/test_entradas.py (las cuatro entradas, CLR y color) y
+  tests/test_formato.py (LIST, linea en blanco, errores, arranque).
+  tests/test_editor.py: el caso de editar una linea listada usa ahora la
+  columna 5 (antes 6, por el espacio).
+- VICE: SYS58692 y POKE214/211+SYS58732; cinta y disco como antes.
+- Bateria completa en verde (21 tests).

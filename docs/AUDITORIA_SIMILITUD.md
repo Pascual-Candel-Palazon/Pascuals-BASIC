@@ -189,3 +189,23 @@ Propio vs C64 KERNAL: Jaccard 0,025; 508 bytes (6,6 %) en coincidencias
 de 8 o mas; maximo 54. Sin cambio material. Coincidencia nueva: $EA7E
 (9 B), `LDA $DC0D` seguido de la salida PLA/TAY/PLA/TAX/PLA/RTI. Es la
 direccion canonica y su contrato documentado (reconocer el CIA y salir).
+
+## Repeticion tras las entradas internas y la salida del BASIC (21 oct 2026)
+
+Propio vs C64 KERNAL: Jaccard 0,024; 550 bytes (7,1 %) en coincidencias
+de 8 o mas (antes 508); maximo 54 (el mismo). VIC-20: 0,012. DOS 1541:
+0,005.
+
+La subida viene de que las variables del editor ahora se ensamblan en
+pagina cero (antes, por estar definidas despues de usarse, iban con
+direccion absoluta). Al usar las mismas direcciones documentadas que el
+C64, algunas secuencias cortas dan los mismos bytes:
+- $E4FB (11 B, GETIN): desplazar el bufer de teclado un byte (`LDA
+  KBUF+1,X / STA KBUF,X / INX / CPX KNDX`) en 631/198.
+- $E742 (8 B, CHRIN): guardar columna (211) y fila (214) del cursor.
+- $E9A1 (8 B, STOP): seleccionar la fila 7 del CIA y leer el bit de
+  RUN/STOP.
+- $E5D7 (8 B, SCNKEY): conmutar el juego de caracteres en $D018.
+Todas las impone la direccion documentada o el hardware. Las cuatro
+entradas fijas nuevas ($E544, $E56C, $E716, $E9FF) no coinciden con el
+original: solo comparten la direccion.

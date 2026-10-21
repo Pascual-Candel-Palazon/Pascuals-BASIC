@@ -51,7 +51,7 @@ def main():
     ARRIBA = bytes([0x91]); DER = bytes([0x1D])
     mq = Maquina()
     mq.teclear(b"10 A=5\r20 B=6\rLIST\r", 70_000_000)
-    extra = ARRIBA * 3 + DER * 6 + b"9\r"   # subir a '10 A=5' listada, '5'->'9'
+    extra = ARRIBA * 3 + DER * 5 + b"9\r"   # subir a "10 A=5" listada, 5 -> 9 (col 5)
     cola = list(extra); m = mq.mpu; n = 0; prox = 200_000
     while n < 70_000_000 and (cola or n < prox + 4_000_000):
         if n % 17000 == 0 and n and not (m.p & 0x04):
