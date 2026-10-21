@@ -26,9 +26,10 @@ def test_scroll():
         print("AVISO: sin listado; omitido test de scroll")
         return True
     mq = Maquina()
+    mq.mem.write(0x0288, [4])   # pagina de la pantalla (648), como deja CINT
     for f in range(25):
         mq.mem.write(0x0400 + f * 40, [f + 1] * 40)
-    assert mq.subrutina(kscroll, 30000)
+    assert mq.subrutina(kscroll, 60000)
     err = sum(1 for f in range(24)
               if bytes(mq.mem[0x0400 + f*40:0x0400 + f*40 + 40]) != bytes([f+2]*40))
     limpia = bytes(mq.mem[0x0400 + 960:0x0400 + 1000]) == b"\x20" * 40

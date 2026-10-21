@@ -330,13 +330,7 @@ KSCROUT:
 @store: ora KRVS        ; inverso: bit 7 si esta activo
         ldy KCOL
         sta (KPNT),Y
-        ; escribir el color actual en la RAM de color ($D800 = KPNT+$D400)
-        lda KPNT
-        sta KCPTR
-        lda KPNT+1
-        clc
-        adc #$D4
-        sta KCPTR+1
+        jsr KSETCP      ; escribir el color actual en la RAM de color
         lda KCOLOR
         sta (KCPTR),Y
         lda KINSRT
@@ -365,15 +359,9 @@ KSCROUT:
         bcc @ck
         inc KPNT+1
 @ck:    inc KROW
-        ; pasamos de la fila 24? (PNT > $07C0)
-        lda KPNT+1
-        cmp #>(SCREEN+1000)
+        lda KROW        ; pasamos de la fila 24?
+        cmp #25
         bcc @stamp
-        bne @scroll
-        lda KPNT
-        cmp #<(SCREEN+1000)
-        bcc @stamp
-@scroll:
         jsr KSCROLL     ; resetea KPNT/KROW a fila 24 y desplaza KLNK
 @stamp: ldx KROW
         lda KLNKV
@@ -384,13 +372,10 @@ KSCROUT:
         cmp #40
         bcs @cr
         jmp @done
-@home:  lda #<SCREEN    ; cursor a (0,0)
-        sta KPNT
-        lda #>SCREEN
-        sta KPNT+1
-        lda #$00
-        sta KCOL
-        sta KROW
+@home:  ldx #$00        ; cursor a (0,0)
+        ldy #$00
+        clc
+        jsr KPLOT
         jmp @done
 @inst:  ; insertar un espacio en el cursor: desplazar la fila a la derecha
         ldy #39
@@ -420,22 +405,14 @@ KSCROUT:
         bcc @dk
         inc KPNT+1
 @dk:    inc KROW
-        lda KPNT+1
-        cmp #>(SCREEN+1000)
+        lda KROW
+        cmp #25
         bcc @done
-        bne @dsc
-        lda KPNT
-        cmp #<(SCREEN+1000)
-        bcc @done
-@dsc:   jsr KSCROLL     ; fija KROW=24
+        jsr KSCROLL     ; fija KROW=24
         jmp @done
-@up:    lda KPNT+1
-        cmp #>SCREEN
-        bne @upok
-        lda KPNT
-        cmp #<SCREEN
+@up:    lda KROW
         beq @jdone2     ; ya en la primera linea
-@upok:  sec
+        sec
         lda KPNT
         sbc #40
         sta KPNT
@@ -504,12 +481,7 @@ KCUROFF:
         lda (KPNT),Y
         eor #$80
         sta (KPNT),Y
-        lda KPNT        ; restaurar el color guardado bajo el cursor
-        sta KCPTR
-        lda KPNT+1
-        clc
-        adc #$D4
-        sta KCPTR+1
+        jsr KSETCP      ; restaurar el color guardado bajo el cursor
         lda KGDCOL
         sta (KCPTR),Y
         lda #$00
@@ -760,7 +732,11 @@ KSCNKEY:
         ldx KLIDX
         jsr KXLATE
         beq @norpt
-        ; ¿es repetible? espacio, cursores, DEL, INS
+        ; ¿es repetible? 650 ($028A): bit 7 = todas, bit 6 = ninguna;
+        ; 0 = espacio, cursores, DEL e INST (como el C64)
+        bit $028A
+        bmi @rpok
+        bvs @norpt
         ldx #$06
 @rptst: cmp KRPTSET,X
         beq @rpok
@@ -1086,10 +1062,10 @@ KSRSTUF:
         tay
         rts
 
-; KROWP: KVPTR = SCREEN + X*40 (X = fila 0-24). Destruye A y X.
-KROWP:  lda #<SCREEN
+; KROWP: KVPTR = pantalla (pagina 648) + X*40 (X = fila 0-24). Destruye A y X.
+KROWP:  lda #$00        ; la pantalla empieza en la pagina 648 ($0288)
         sta KVPTR
-        lda #>SCREEN
+        lda $0288
         sta KVPTR+1
 @m:     dex
         bmi @r
@@ -1131,28 +1107,6 @@ KUDTIM: inc KTIME+2
 @r:     rts
 
 
-FIJA $E9FF
-; KCLRLN ($E9FF): borra la fila X (0-24) de la pantalla con espacios y
-; pone su RAM de color al color de texto actual. Usa KVPTR.
-KCLRLN: jsr KROWP
-        ldy #39
-        lda #$20
-@l1:    sta (KVPTR),Y
-        dey
-        bpl @l1
-        lda KVPTR+1
-        clc
-        adc #>(COLOR-SCREEN)
-        sta KVPTR+1
-        ldy #39
-        lda KCOLOR
-@l2:    sta (KVPTR),Y
-        dey
-        bpl @l2
-        rts
-
-KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
-
 ; ------------------------------------------------------------
 ; STOP: Z=1 si RUN/STOP pulsada
 ; ------------------------------------------------------------
@@ -1166,6 +1120,31 @@ KSTOP:  jsr KSTOPRAW
         jmp STOP
 @ret:   rts
 
+
+FIJA $E9FF
+; KCLRLN ($E9FF): borra la fila X (0-24) de la pantalla con espacios y
+; pone su RAM de color al color de texto actual. Usa KVPTR.
+KCLRLN: jsr KROWP
+        ldy #39
+        lda #$20
+@l1:    sta (KVPTR),Y
+        dey
+        bpl @l1
+        lda KVPTR+1     ; misma posicion en la RAM de color:
+        sec             ; alto - pagina de la pantalla + $D8
+        sbc $0288
+        adc #>COLOR-1   ; (C=1 tras la resta)
+        sta KVPTR+1
+        ldy #39
+        lda KCOLOR
+@l2:    sta (KVPTR),Y
+        dey
+        bpl @l2
+        rts
+
+KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
+
+
 ;.org $EA31: manejador principal del IRQ (destino por defecto de $0314).
 ; Direccion canonica: los programas encadenan su IRQ con JMP $EA31.
 .org $EA31
@@ -1178,13 +1157,7 @@ KIRQ:   jsr KUDTIM
         bne @ack
         lda #20
         sta KBLCNT
-        ; puntero a la RAM de color de la celda del cursor
-        lda KPNT
-        sta KCPTR
-        lda KPNT+1
-        clc
-        adc #$D4
-        sta KCPTR+1
+        jsr KSETCP      ; puntero a la RAM de color de la linea del cursor
         ldy KCOL
         lda (KPNT),Y
         eor #$80
@@ -1219,55 +1192,24 @@ KIRQ:   jsr KUDTIM
 .org $EA87
 
 ; ------------------------------------------------------------
-; scroll de una linea hacia arriba
-; Los bloques se copian SECUENCIALMENTE y completos: entrelazar
-; las paginas con un mismo indice corrompe los 40 bytes que el
-; bloque siguiente pisa antes de que el anterior los lea.
+; scroll de una linea hacia arriba (pantalla en la pagina 648 y RAM de
+; color). La copia es ascendente y lineal: el origen va 40 bytes por
+; delante del destino.
 ; ------------------------------------------------------------
 KSCROLL:
         inc KSCRCNT     ; contador global (ajuste del editor)
         ldx #$00
-@s1:    lda SCREEN+40,X
-        sta SCREEN,X
-        inx
-        bne @s1
-@s2:    lda SCREEN+$100+40,X
-        sta SCREEN+$100,X
-        inx
-        bne @s2
-@s3:    lda SCREEN+$200+40,X
-        sta SCREEN+$200,X
-        inx
-        bne @s3
-@s4:    lda SCREEN+$300+40,X
-        sta SCREEN+$300,X
-        inx
-        cpx #<(1000-40-$300)
-        bne @s4
-        ; cursor a inicio de la ultima fila
-        lda #<(SCREEN+960)
-        sta KPNT
-        lda #>(SCREEN+960)
-        sta KPNT+1
-        ; --- desplazar la RAM de color igual que la pantalla ---
-        ldx #$00
-@cs1:   lda COLOR+40,X
-        sta COLOR,X
-        inx
-        bne @cs1
-@cs2:   lda COLOR+$100+40,X
-        sta COLOR+$100,X
-        inx
-        bne @cs2
-@cs3:   lda COLOR+$200+40,X
-        sta COLOR+$200,X
-        inx
-        bne @cs3
-@cs4:   lda COLOR+$300+40,X
-        sta COLOR+$300,X
-        inx
-        cpx #<(1000-40-$300)
-        bne @cs4
+        jsr KROWP       ; KVPTR = fila 0 de la pantalla (pagina 648)
+        jsr @blk
+        lda #<COLOR     ; lo mismo en la RAM de color
+        sta KVPTR
+        lda #>COLOR
+        sta KVPTR+1
+        jsr @blk
+        ldx #24         ; cursor a la ultima fila, misma columna
+        ldy KCOL
+        clc
+        jsr KPLOT
         ldx #24         ; limpiar la ultima fila (espacios y color actual)
         jsr KCLRLN
         ; desplazar la tabla de enlace una fila hacia arriba
@@ -1279,8 +1221,43 @@ KSCROLL:
         bne @shk
         lda #$80        ; la nueva fila inferior inicia linea (por defecto)
         sta KLNK+24
-        lda #24
-        sta KROW
+        rts
+; copiar 960 bytes de KVPTR+40 a KVPTR, en orden ascendente (el origen va
+; 40 bytes por delante, asi que nunca se pisa algo por leer). Usa KCPTR:
+; el IRQ esta inhibido dentro de CHROUT y lo recalcula al parpadear.
+@blk:   clc
+        lda KVPTR
+        adc #40
+        sta KCPTR
+        lda KVPTR+1
+        adc #$00
+        sta KCPTR+1
+        ldx #$03        ; 3 paginas enteras...
+        ldy #$00
+@p:     lda (KCPTR),Y
+        sta (KVPTR),Y
+        iny
+        bne @p
+        inc KCPTR+1
+        inc KVPTR+1
+        dex
+        bne @p
+@q:     lda (KCPTR),Y   ; ...y 192 bytes
+        sta (KVPTR),Y
+        iny
+        cpy #192
+        bne @q
+        rts
+
+; KSETCP: KCPTR = posicion en la RAM de color de la linea KPNT: el mismo
+; desplazamiento desde $D800 que KPNT desde la pagina de la pantalla (648).
+KSETCP: lda KPNT
+        sta KCPTR
+        lda KPNT+1
+        sec
+        sbc $0288
+        adc #>COLOR-1   ; (C=1 tras la resta)
+        sta KCPTR+1
         rts
 
 

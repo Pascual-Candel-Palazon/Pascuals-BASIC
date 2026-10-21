@@ -91,6 +91,8 @@ A efectos del repo actual cuenta como GAP.
 | LIST con espacio delante del numero; linea en blanco tras cada linea tecleada; "ERROR" con un espacio | VICE (ROM original) + TEST | Salida del BASIC ya identica a la del C64. tests/test_formato.py. |
 | Entradas internas $E544, $E56C, $E716, $E9FF | TEST + VICE | Colocadas con la macro FIJA. tests/test_entradas.py. |
 | CLR devolvia el texto a azul claro | VICE (ROM original) + TEST | El C64 conserva 646 y pinta la RAM de color con el. |
+| 650: repeticion de todas / ninguna | TEST | Bits 7 y 6. tests/test_repeticion.py. |
+| 648: el editor escribia siempre en $0400 | TEST + VICE (ROM original) | Base de pantalla, limites del cursor, color y scroll siguen a 648. tests/test_pagina648.py. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

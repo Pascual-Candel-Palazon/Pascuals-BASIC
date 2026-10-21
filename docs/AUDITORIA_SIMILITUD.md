@@ -209,3 +209,14 @@ C64, algunas secuencias cortas dan los mismos bytes:
 Todas las impone la direccion documentada o el hardware. Las cuatro
 entradas fijas nuevas ($E544, $E56C, $E716, $E9FF) no coinciden con el
 original: solo comparten la direccion.
+
+## Repeticion tras 648/650 (21 oct 2026)
+
+Propio vs C64 KERNAL: Jaccard 0,024; 559 bytes (7,2 %) en coincidencias
+de 8 o mas; maximo 54. VIC-20: 0,012.
+
+Una primera version del puntero a la RAM de color (byte alto AND 3,
+OR $D8, en KSETCP) coincidia en 14 bytes con el original. Se cambio por
+"byte alto - 648 + $D8", que no coincide y ademas sirve para paginas no
+alineadas a 1K. Nueva coincidencia de 8 bytes en KMEMTOP ($EB77):
+`STX/STY $0283/$0284` + RTS, la direccion documentada de MEMTOP.
