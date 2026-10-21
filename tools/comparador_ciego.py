@@ -144,10 +144,17 @@ def informe(prop, base_p, ref, lab, titulo, detalle=True):
     return len(m), largo, len(mo), lo, jac
 
 
-def kernal_start(lab):
-    for a, n in lab:
-        if n == 'KRESET':
-            return a
+def kernal_start(listado):
+    """Primera direccion tras la cola del BASIC (la seccion .org $E000)."""
+    pcs = []
+    if listado:
+        for ln in open(listado, encoding='latin-1'):
+            m = re.match(r'^00([0-9A-F]{4})r?\s+\d\s+\.org\s+(\S+)', ln)
+            if m:
+                pcs.append((int(m.group(1), 16), m.group(2)))
+    for k, (pc, dest) in enumerate(pcs[:-1]):
+        if dest.upper() == '$E000':
+            return pcs[k + 1][0]
     return 0xE200
 
 
@@ -179,7 +186,7 @@ def main():
     R = lambda p: open(os.path.join(a.vice, p), 'rb').read()
     OK, OB = open(a.kernal, 'rb').read(), open(a.basic, 'rb').read()
     lab = labels(a.listado if os.path.exists(a.listado) else None)
-    ks = kernal_start(lab) - 0xE000
+    ks = kernal_start(a.listado if os.path.exists(a.listado) else None) - 0xE000
     CK = {r: R('C64/kernal-901227-0%d.bin' % r) for r in (1, 2, 3)}
     CB = R('C64/basic-901226-01.bin')
     VK = R('VIC20/kernal.901486-07.bin')

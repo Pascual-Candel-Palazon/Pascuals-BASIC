@@ -70,6 +70,16 @@ A efectos del repo actual cuenta como GAP.
 | KUNLSN (recarga de $3F) | VICE + PERDIDO | Verificado en simulacion dual C64+1541 y en VICE; ninguno de los dos arneses esta en el repo. |
 
 
+## Desde el 21 oct
+
+| Cambio | Evidencia | Nota |
+|--------|-----------|------|
+| Cinta (LOAD/SAVE/VERIFY, fusion, nombre) | TEST | tests/test_cinta.py con el arnes tests/cinta.py (CIA1 a nivel de ciclo). Sustituye a los tests perdidos de junio. |
+| SAVE de cinta roto por solape con $FD15 | TEST + MECH | Causa demostrada en el listado (los 3 bytes de wbp_par quedaban como JMP KRESTOR). El build ahora aborta si hay solape. |
+| RAMTAS pisaba $00/$01 | MECH | `95 02` (STA zp,X) en el listado; ahora `9D 02 00`. py65 no modela el puerto, por eso los tests no lo veian. |
+| Direcciones canonicas (tier-3) | TEST | tests/test_canonicas.py: vectores, $0314/$0316/$0318, contrato NMI, $FEBC, cadena $EA31, salida $EA81, BRK, SYS 64738. |
+
+
 ## Huecos de compatibilidad encontrados en esta auditoria
 
 1. **Variables ZP en direcciones no estandar.** Al desplazar la pagina

@@ -181,6 +181,12 @@ xvfb-run -a x64sc -default \
   vuelven a READY).
 - 20 oct: `bin/` regenerado (estaba parado desde af65a4e) y bit de
   ejecucion restaurado en build.sh y tests/run_all.sh.
+- 21 oct: SAVE de cinta arreglado (llevaba roto desde 726cbda: el codigo
+  crecio por encima del trampolin de $FD15 y el build lo piso sin avisar) y
+  RAMTAS deja de escribir 0 en $00/$01 (`sta $0002,X` en modo pagina cero
+  daba la vuelta). El build aborta ahora si dos secciones .org se solapan.
+  Arnes de datasette (tests/cinta.py) y tests/test_cinta.py.
+- 21 oct: tier-3 rehecho CON la cinta dentro (ver seccion 14).
 - 20 oct: el buffer de linea del editor (KLINE) pasa de $033C a $0200.
   En $033C (828, buffer de cinta) cada linea tecleada machacaba las
   rutinas de usuario (`POKE828,96` + `SYS828` se colgaba). En $0200
@@ -684,7 +690,9 @@ permite rehacerlo.
   usada para KUNLSN. Los tests del repo solo cubren el parsing (fases 1,
   2a, 3), no el bus.
 
-**Agosto, tier-3 (direcciones canonicas) y layout robusto:**
+**Agosto, tier-3 (direcciones canonicas) y layout robusto:** (REHECHO el
+21 oct con otro metodo y con la cinta dentro; ver seccion 14. Lo de abajo
+queda como registro de la version perdida.)
 - RESET en $FCE2 (arregla SYS 64738), entrada IRQ $FF48, NMI $FE43 con
   despacho $FE47 (y arreglo del contrato $0318: la ruta NMI consumia 6
   bytes de pila en vez de 3), BRK $FE66, salida RTI $FEBC, IRQ principal
@@ -705,9 +713,9 @@ permite rehacerlo.
   (faltaban 617 bytes contiguos; la compresion recupero 291 sin tocar la
   fusion de copias).
 
-Orden propuesto para rehacer: (1) arnes de cinta + sus tests, para que
-la cinta tenga red antes de moverla; (2) tier-3 con layout robusto desde
-el principio; (3) arnes VICE en el repo, sin incluir la ROM del 1541.
+Estado del orden propuesto: (1) arnes de cinta + tests: HECHO (21 oct);
+(2) tier-3: HECHO (21 oct, seccion 14); (3) arnes VICE en el repo, sin la
+ROM del 1541: pendiente.
 
 ---
 
@@ -725,4 +733,54 @@ algunos commits queda corregido aqui:
 | b876e1c | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
 | 4207426 | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (60a09ac, af65a4e) con los tres commits hechos en la web; sin conflictos. |
 | rama fix-bload-guard | | Ya fusionada (PR #1). Se puede borrar en GitHub. |
+| 726cbda | "Implementar SHIFT+RUN/STOP" | Sin saberlo, empujo el codigo por encima de $FD15 y rompio el SAVE de cinta (corregido el 21 oct en 61b3db5). |
+
+---
+
+## 14. Mapa del KERNAL (tier-3, 21 oct 2026)
+
+Las direcciones internas que usan juegos y cartuchos estan en su sitio
+canonico. Direcciones y semantica: interfaz publicada (nivel A/B). Cada
+una tiene su test en tests/test_canonicas.py.
+
+| Direccion | Que hay | Contrato |
+|-----------|---------|----------|
+| $EA31 | KIRQ, manejador principal del IRQ | destino por defecto de $0314; los programas encadenan con JMP $EA31 |
+| $EA81 | salida del IRQ (PLA/TAY/PLA/TAX/PLA/RTI) | JMP $EA81 sale sin el trabajo del KERNAL |
+| $FCE2 | KRESET | vector RESET; SYS 64738 |
+| $FD15 | KRESTOR (colocado directo, sin trampolin) | RESTOR interno |
+| $FD50 | KRAMTAS (directo) | RAMTAS interno |
+| $FDA3 | KIOINIT (directo) | IOINIT interno |
+| $FE43 | entrada NMI: SEI + JMP ($0318) | el manejador de usuario ve solo PC+P |
+| $FE47 | NMI por defecto: apila A/X/Y y sigue en KNMI | destino por defecto de $0318 |
+| $FE66 | BRK por defecto: arranque en caliente (KWARM) | destino por defecto de $0316 |
+| $FEBC | salida comun (PLA/TAY/PLA/TAX/PLA/RTI) | JMP $FEBC |
+| $FF48 | KIRQENT, entrada hardware IRQ/BRK | vector IRQ |
+| $FF5B | trampolin a KCINT (CINT no cabe en su hueco) | CINT interno |
+
+Cambios de comportamiento respecto a julio, ambos hacia lo documentado:
+- NMI: antes la entrada apilaba A/X/Y ANTES de saltar por ($0318), asi que
+  un manejador de usuario que acababa en RTI volvia a basura. Ahora solo
+  SEI + JMP ($0318); el apilado lo hace el manejador por defecto ($FE47).
+- BRK por defecto: antes restauraba y seguia (RTI); ahora arranque en
+  caliente a READY con el programa intacto, como el C64.
+
+Como esta organizado src/kernal.s:
+- La seccion principal (`.org $E200`) fluye hasta $EA30; KIRQ va en
+  `.org $EA31` con su salida en `.org $EA81`; el resto fluye desde `.org
+  $EA87` hasta antes de $FCE2.
+- Las islas de direccion fija (las de la tabla de arriba) y las islas de
+  relleno (mensajes de error, KERRTAB, KIOMSG) estan al final, antes de la
+  marca `;;; ISLAS-FIN`. Las cadenas de mensajes se repartieron en los
+  huecos que dejan las canonicas porque son datos sin dependencias.
+- El orden de las secciones en el fichero da igual: c64_build.py las
+  coloca por su .org y ABORTA el build si dos se solapan. Al final imprime
+  el espacio libre ("KERNAL libre: N bytes; huecos mayores: ...").
+- Para meter codigo nuevo: si la seccion donde va se pasa, el build lo
+  dice; mover entonces alguna rutina o cadena autocontenida a un hueco.
+
+La cinta sigue completa (LOAD/SAVE/VERIFY, fusion de copias, velocidad
+adaptativa): no hizo falta recortarla. Lo de agosto no cabia porque se
+intentaba meter la cinta como bloque contiguo en un hueco; ahora se
+movieron otras cosas (cadenas) a los huecos pequenos.
 

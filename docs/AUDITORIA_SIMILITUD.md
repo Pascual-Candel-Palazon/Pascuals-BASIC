@@ -140,3 +140,29 @@ python3 tools/comparador_ciego.py --vice RUTA_A_VICE --listado build/rom_listado
 4. **Bug encontrado de paso (compatibilidad, no procedencia).** El editor
    usaba $033C (828) como buffer de linea: ver `AUDITORIA.md`, hueco 3.
    Corregido el mismo dia (KLINE a $0200).
+
+## Repeticion tras el tier-3 (21 oct 2026)
+
+Mismo metodo y mismas referencias, sobre el KERNAL con las direcciones
+canonicas colocadas (ver `docs/CONTINUIDAD.md`, seccion 14):
+
+| Comparacion | Jaccard opcodes | Bytes en coincidencias >=8 | Coincidencia max. |
+|---|---|---|---|
+| **Propio vs C64 KERNAL** | **0,025** | 493 (6,4 %) | 54 |
+| Propio vs VIC-20 KERNAL | 0,012 | 226 (2,9 %) | 26 |
+| Propio vs DOS 1541 (independiente) | 0,005 | 8 (0,1 %) | 8 |
+
+Sin cambio material. Coincidencias nuevas, todas por estar en la
+direccion canonica y cumplir su contrato:
+- $FCF7 (10 B, KRESET): `JSR $FDA3 / JSR $FD50 / JSR $FD15`. Al colocar
+  IOINIT, RAMTAS y RESTOR en sus direcciones documentadas, las llamadas
+  de arranque producen los mismos bytes.
+- $FDA3 (8 B) y $FDC5 (10 B, KIOINIT): apagar las IRQ de los CIA y cargar
+  el timer A del jiffy ($4295). Hardware.
+- $FE43 (9 B): entrada NMI `SEI / JMP ($0318)` seguida de `PHA / TXA /
+  PHA / TYA / PHA` en $FE47. Es el contrato del vector $0318.
+- $FF48 (19 B, KIRQENT): ya estaba en el informe; ahora ademas en la misma
+  direccion que el original, porque es su direccion canonica.
+
+Bytes iguales en la misma direccion: 2,6 % (antes 2,1 %), por estas
+mismas piezas.
