@@ -36,6 +36,12 @@ an opaque peripheral):
   `$8002`), the init API (CINT/IOINIT/RAMTAS) through the jump table and
   through the documented internal addresses (`$FF5B`, `$FDA3`, `$FD50`,
   `$FD15`), and the BASIC cold/warm vectors at `$A000/$A002`
+- Internal KERNAL entry points that games and cartridges call directly
+  are at their documented addresses: main IRQ `$EA31` and IRQ exit
+  `$EA81`, IRQ entry `$FF48`, NMI entry `$FE43` (only the CPU frame is on
+  the stack when a user `$0318` handler runs) and default NMI `$FE47`, BRK
+  warm start `$FE66`, common exit `$FEBC`, RESET `$FCE2` (`SYS 64738`
+  works), RESTOR/RAMTAS/IOINIT/CINT at `$FD15`/`$FD50`/`$FDA3`/`$FF5B`
 - Every KERNAL jump-table entry (`$FF81-$FFF3`) is implemented, none is a
   stub (SETMSG, MEMTOP, MEMBOT, SCREEN, PLOT, IOBASE, SETTIM, RDTIM,
   SETTMO included). Not implemented: RS-232 (device 2)
@@ -68,9 +74,9 @@ an opaque peripheral):
   prompt and `SAVING` message, and it disables the jiffy IRQ during the write so
   the timing stays clean. Verified end to end by typing `SAVE"",1` on one
   machine and `LOAD"",1` on another: the program survives the round trip byte
-  for byte. Note: the tape checks were run with a py65 harness (CIA Timer B
-  and FLAG model) that is not yet in this repository; see
-  `docs/CONTINUIDAD.md`, section "Pendiente de recuperar".
+  for byte. Tape is covered by `tests/test_cinta.py`, which runs SAVE,
+  LOAD, VERIFY and the two-copy merge (with deliberately corrupted pulses)
+  through a cycle-level model of CIA1 (`tests/cinta.py`).
 - Long BASIC error messages (C64 style): `?SYNTAX ERROR`,
   `?DIVISION BY ZERO ERROR`, `?NEXT WITHOUT FOR ERROR IN nn`, etc.
 - `DEVICE NOT PRESENT` detection; reserved variables `ST` / `TI` / `TI$`
@@ -107,7 +113,7 @@ Requirements: `python3`, `cc65`, and `py65` for the tests
 ```
 ./build.sh        # builds into build/ and copies the ROMs to bin/
 cd tests
-./run_all.sh      # full suite: 15 tests (slow under py65, several minutes)
+./run_all.sh      # full suite: 17 tests (slow under py65, several minutes)
 python3 test_humo.py   # or any single test_*.py
 ```
 
