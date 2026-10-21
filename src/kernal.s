@@ -54,6 +54,61 @@ COLOR   = $D800
 
 .org $E200              ; tras la continuacion del BASIC
 
+; --- variables del editor y del teclado (antes repartidas por la seccion) ---
+KBLCNT  = $CD           ; cuenta del parpadeo (documentado)
+KBLON   = $CF           ; cursor encendido (documentado)
+KBLSW   = $9F
+KLCOL   = $028C
+KLMASK  = $028E
+KLIDX   = $9E
+KRPT    = $028B         ; contador de repeticion (KOUNT)
+KTMP    = $D7
+KTMP2   = $F2
+KPREV   = $029B         ; estado anterior para deteccion de flanco (8 bytes)
+KSHIFT  = $02A3
+KTMP3   = $F5
+; KLINE: bufer de la linea logica leida de pantalla (hasta 80 bytes).
+; Comparte direccion con el BUF del BASIC ($0200, 81 bytes). Es seguro
+; porque quien consume CHRIN (INLIN del BASIC, o un lector de codigo
+; maquina tipico) guarda el caracter k en la posicion <= k DESPUES de que
+; el editor lo haya servido: nunca pisa algo que quede por leer.
+; Antes estaba en $033C (buffer de cinta, 828): cada linea tecleada
+; machacaba las rutinas de usuario que se cargan ahi (POKE + SYS 828).
+KLINE   = $0200
+KLLEN   = $C8
+KLPOS   = $CE
+KLSTART = $CA
+KCOLOR  = $0286         ; color actual del cursor/texto
+KGDCOL  = $0287         ; color guardado bajo el cursor (ubicacion C64)
+KMBOT   = $0281         ; inicio de memoria (2 bytes)
+KMTOP   = $0283         ; tope de memoria (2 bytes)
+KRVS    = $C7           ; flag de inverso ($00/$80); direccion documentada (199)
+KQTSW   = $D4           ; modo comillas (bit0); direccion documentada (212)
+KINSRT  = $D8           ; espacios insertados pendientes (modo insercion, 216)
+KLQ     = $F8           ; comillas vistas al leer la linea de pantalla (bit0)
+KCTRL   = $02A4
+KCBM    = $02A5
+KCASE   = $0292         ; flanco de SHIFT+C=
+KLNK    = $D9           ; tabla de enlace de lineas (25 bytes, $D9-$F1, como el C64)
+KROW    = $D6           ; fila del cursor 0-24 (direccion documentada, 214)
+KEDROW  = $C9           ; fila donde empezo la entrada
+KSROW   = $D0           ; fila de inicio de la linea logica
+KLSTRT2 = $D5           ; columna inicial efectiva
+KLNKV   = $F6           ; valor a estampar en KLNK (inicio/continuacion)
+KCNT    = $FA
+KSCR0   = $F7
+KSCRCNT = $F9
+
+; FIJA dir: rellena con NOP hasta la direccion fija dir (entradas internas
+; conocidas del C64 que los programas llaman directamente). Falla si el
+; codigo anterior ya la ha pasado.
+.macro FIJA dir
+ .assert * <= dir, error, "FIJA: el codigo anterior pasa de la direccion fija"
+ .if dir - * > 0
+  .res dir - *, $EA
+ .endif
+.endmacro
+
 ; ------------------------------------------------------------
 ; CINT ($FF81): VIC de pantalla, editor y teclado
 ; ------------------------------------------------------------
@@ -69,6 +124,7 @@ KCINT:
         sta $D015       ; sprites fuera
         lda #$0E
         sta $D020       ; borde azul claro
+        sta KCOLOR      ; texto azul claro al arrancar (CLR no lo cambia)
         lda #$06
         sta $D021       ; fondo azul
         lda #$04
@@ -112,46 +168,34 @@ KCINT:
         rts
 
 ; ------------------------------------------------------------
-; limpiar pantalla y posicionar cursor en (0,0)
-; ------------------------------------------------------------
-KCLS:   ldx #$00
-        lda #$20        ; espacio (codigo de pantalla)
-@l1:    sta SCREEN,X
-        sta SCREEN+$100,X
-        sta SCREEN+$200,X
-        sta SCREEN+$2E8,X
-        inx
-        bne @l1
-        lda #$0E        ; azul claro por defecto
-        sta KCOLOR
-        ldx #$00
-        lda KCOLOR
-@l2:    sta COLOR,X
-        sta COLOR+$100,X
-        sta COLOR+$200,X
-        sta COLOR+$2E8,X
-        inx
-        bne @l2
-        lda #<SCREEN
-        sta KPNT
-        lda #>SCREEN
-        sta KPNT+1
-        lda #$00
-        sta KCOL
-        sta KROW
-        ldx #$00
-        lda #$80        ; toda fila es inicio de linea logica
-@lk:    sta KLNK,X
-        inx
-        cpx #25
-        bne @lk
-        rts
-
-; ------------------------------------------------------------
 ; CHROUT: imprime PETSCII en pantalla (A = caracter)
 ; conserva A, X, Y
 ; ------------------------------------------------------------
 KCHROUT:
+        pha
+        ; --- si la salida por defecto es a dispositivo serie (>=4),
+        ;     enviar el byte por el bus IEC en vez de a pantalla. ---
+        lda KDFLTO
+        cmp #$04
+        bcc KSCRPL
+        txa
+        pha
+        tya
+        pha
+        tsx
+        lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3)
+        jsr KCIOUT      ; CIOUT (envio diferido); destruye X/Y, restaurados al salir
+        pla
+        tay
+        pla
+        tax
+        pla
+        clc
+        rts
+KSCRPL: pla
+; KSCROUT ($E716): escribe el caracter A en la pantalla, sin mirar el
+; dispositivo de salida. Conserva A, X e Y.
+KSCROUT:
         php
         sei             ; el blink del IRQ no debe tocar mientras movemos
         pha
@@ -159,23 +203,6 @@ KCHROUT:
         pha
         tya
         pha
-        ; --- si la salida por defecto es a dispositivo serie (>=4),
-        ;     enviar el byte por el bus IEC en vez de a pantalla. ---
-        lda KDFLTO
-        cmp #$04
-        bcc @noserout
-        tsx
-        lda $0103,X     ; A original (pila: Y@+1, X@+2, A@+3, P@+4)
-        jsr KCIOUT      ; CIOUT (envio diferido); destruye X/Y, restaurados al salir
-        pla
-        tay
-        pla
-        tax
-        pla
-        plp
-        clc
-        rts
-@noserout:
         jsr KCUROFF     ; apagar el cursor si esta encendido
         lda #20
         sta KBLCNT      ; reiniciar la cadencia al teclear
@@ -431,6 +458,159 @@ KCHROUT:
         clc
         rts
 
+; codigo de pantalla (A) -> PETSCII (A) al leer la linea. Dentro de
+; comillas, un caracter invertido es un control escrito en modo comillas
+; ($80-$9F -> $00-$1F, $C0-$DF -> $80-$9F); fuera, el inverso se ignora.
+KSC2P:  cmp #$22
+        bne @n
+        inc KLQ         ; comilla: conmuta (bit0)
+        rts
+@n:     cmp #$80
+        bcc @norm
+        pha
+        lda KLQ
+        lsr a
+        pla
+        bcc @norm       ; fuera de comillas
+        and #$7F
+        cmp #$20
+        bcc @r          ; control $00-$1F
+        cmp #$40
+        bcc @norm2
+        cmp #$60
+        bcs @norm2
+        adc #$40        ; $40-$5F -> control $80-$9F (C=0)
+@r:     rts
+@norm:  and #$7F
+@norm2: cmp #$20
+        bcc @a40        ; sc 0-31 -> PETSCII $41-$5F
+        cmp #$40
+        bcc @r          ; sc $20-$3F: identico
+        adc #$7F        ; sc $40-$7E -> PETSCII $C0+ (C=1: +$80)
+        rts
+@a40:   adc #$40        ; (C=0)
+        rts
+
+; apagar el cursor si esta invertido (auxiliar del editor)
+KCUROFF:
+        pha
+        lda KBLON
+        beq @no
+        php             ; (CHROUT la llama con IRQ ya enmascaradas)
+        sei
+        tya
+        pha
+        ldy KCOL
+        lda (KPNT),Y
+        eor #$80
+        sta (KPNT),Y
+        lda KPNT        ; restaurar el color guardado bajo el cursor
+        sta KCPTR
+        lda KPNT+1
+        clc
+        adc #$D4
+        sta KCPTR+1
+        lda KGDCOL
+        sta (KCPTR),Y
+        lda #$00
+        sta KBLON
+        pla
+        tay
+        plp
+@no:    pla
+        rts
+
+; ------------------------------------------------------------
+; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
+; ------------------------------------------------------------
+KGETIN: lda KDFLTN
+        cmp #$04
+        bcc @noser
+        jmp KSERIN      ; entrada desde el bus serie
+@noser: txa
+        pha             ; preservar X e Y: INLIN del BASIC depende de ello
+        tya
+        pha
+        ldx KNDX
+        beq @empty
+        sei
+        lda KBUF
+        sta KTMP3
+        ldx #$00
+@sh:    lda KBUF+1,X
+        sta KBUF,X
+        inx
+        cpx KNDX
+        bcc @sh
+        dec KNDX
+        cli
+        pla
+        tay
+        pla
+        tax
+        lda KTMP3       ; A = caracter (Z=0 salvo char NUL)
+        rts
+@empty: pla
+        tay
+        pla
+        tax
+        lda #$00
+        rts
+
+; X = indice 0-63 -> A = PETSCII segun modificadores (preserva Y).
+; Prioridad: CTRL > C= > SHIFT > normal.
+KXLATE:
+        lda KCTRL
+        bne @ct
+        lda KCBM
+        bne @cb
+        lda KSHIFT
+        bne @sh
+        lda KEYTAB,X
+        rts
+@ct:    lda KEYTABT,X
+        rts
+@cb:    lda KEYTABC,X
+        rts
+@sh:    lda KEYTABS,X
+        rts
+
+
+FIJA $E544
+; ------------------------------------------------------------
+; CLS ($E544, entrada interna conocida): limpiar pantalla y cursor a (0,0). Conserva el color de
+; texto (646) y rellena la RAM de color con el, como el C64.
+; ------------------------------------------------------------
+KCLS:   ldx #24
+@r:     lda #$80        ; toda fila es inicio de linea logica
+        sta KLNK,X
+        txa
+        pha
+        jsr KCLRLN
+        pla
+        tax
+        dex
+        bpl @r
+        ldx #$00        ; cursor a (0,0)
+        ldy #$00
+        clc
+        jmp KPLOT
+
+; PETSCII de los 16 codigos de color: CTRL+1..8 (0..7), C=+1..8 (8..15)
+KCOLTAB:
+        .byte $90,$05,$1C,$9F,$9C,$1E,$1F,$9E
+        .byte $81,$95,$96,$97,$98,$99,$9A,$9B
+
+
+FIJA $E56C
+; $E56C (58732, entrada interna conocida): rehace el puntero de la linea
+; de pantalla desde la fila (214) y la columna (211); p. ej.
+; POKE214,F:POKE211,C:SYS58732 mueve el cursor.
+KE56C:  ldx KROW
+        ldy KCOL
+        clc
+        jmp KPLOT
+
 ; ------------------------------------------------------------
 ; SCNKEY: escaneo de la matriz; mete nuevas pulsaciones en KBUF
 ; (sin shift en v0). Deteccion de flanco contra KPREV.
@@ -609,12 +789,6 @@ KSCNKEY:
 @ns:    sta $028D
         rts
 
-
-KTMP    = $D7
-KTMP2   = $F2
-KPREV   = $029B         ; estado anterior para deteccion de flanco (8 bytes)
-KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
-
 ; tabla matriz->PETSCII (sin shift), fila=columna CIA, 8x8
 KEYTAB:
         .byte $14,$0D,$1D,$88,$85,$86,$87,$11  ; DEL RET csrLR F7 F1 F3 F5 csrUD
@@ -626,128 +800,10 @@ KEYTAB:
         .byte $5C,'*',';',$13,$00,'=',$5E,'/'  ; libra * ; HOME RSHIFT = flecha /
         .byte '1',$5F,$00,'2',' ',$00,'Q',$03  ; 1 <- CTRL 2 SPC C= Q STOP
 
-; tabla con shift
-KEYTABS:
-        .byte $94,$0D,$9D,$8C,$89,$8A,$8B,$91  ; INS RET csrLR F8 F2 F4 F6 csrUD
-        .byte '#','W'+$80,'A'+$80,'$','Z'+$80,'S'+$80,'E'+$80,$00
-        .byte '%','R'+$80,'D'+$80,'&','C'+$80,'F'+$80,'T'+$80,'X'+$80
-        .byte $27,'Y'+$80,'G'+$80,'(','B'+$80,'H'+$80,'U'+$80,'V'+$80
-        .byte ')','I'+$80,'J'+$80,'0','M'+$80,'K'+$80,'O'+$80,'N'+$80
-        .byte '+','P'+$80,'L'+$80,'-','>','[','@','<'
-        .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
-        .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$83  ; shift+2=comillas; shift+RUN/STOP=LOAD+RUN
 
-; tabla CTRL. CTRL+1..8 colores, +9/0 inverso, CTRL+letra = codigo de
-; control PETSCII (1..26), mas algunos simbolos. Valores tomados del
-; comportamiento publico documentado (sta.c64.org), no de desensamblado.
-; $00 = sin caracter (lo descarta el escaneo, igual que los huecos $FF
-; del C64 real, que aqui no se pueden usar como centinela).
-KEYTABT:
-        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
-        .byte $1C,$17,$01,$9F,$1A,$13,$05,$00  ; 3 W A 4 Z S E -
-        .byte $9C,$12,$04,$1E,$03,$06,$14,$18  ; 5 R D 6 C F T X
-        .byte $1F,$19,$07,$9E,$02,$08,$15,$16  ; 7 Y G 8 B H U V
-        .byte $12,$09,$0A,$92,$0D,$0B,$0F,$0E  ; 9 I J 0 M K O N
-        .byte $00,$10,$0C,$00,$00,$1B,$00,$00  ; + P L - . : @ ,
-        .byte $1C,$00,$1D,$00,$00,$1F,$1E,$00  ; libra * ; HOME - = flecha /
-        .byte $90,$00,$00,$05,$00,$00,$11,$00  ; 1 <- CTRL 2 SPC C= Q STOP
-; tabla C= (Commodore). C=+letra = grafico izquierdo (PETSCII $A1..$BF),
-; C=+1..8 = colores claros, y los simbolos @ + libra emiten su grafico.
-; El resto no emite nada. Fuente: comportamiento publico (sta.c64.org).
-KEYTABC:
-        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
-        .byte $96,$B3,$B0,$97,$AD,$AE,$B1,$00  ; 3 W A 4 Z S E -
-        .byte $98,$B2,$AC,$99,$BC,$BB,$A3,$BD  ; 5 R D 6 C F T X
-        .byte $9A,$B7,$A5,$9B,$BF,$B4,$B8,$BE  ; 7 Y G 8 B H U V
-        .byte $00,$A2,$B5,$00,$A7,$A1,$B9,$AA  ; 9 I J 0 M K O N
-        .byte $A6,$AF,$B6,$00,$00,$00,$A4,$00  ; + P L - . : @ ,
-        .byte $A8,$00,$00,$00,$00,$00,$00,$00  ; libra * ; HOME - = flecha /
-        .byte $81,$00,$00,$95,$00,$00,$AB,$00  ; 1 <- CTRL 2 SPC C= Q STOP
-
-; X = indice 0-63 -> A = PETSCII segun modificadores (preserva Y).
-; Prioridad: CTRL > C= > SHIFT > normal.
-KXLATE:
-        lda KCTRL
-        bne @ct
-        lda KCBM
-        bne @cb
-        lda KSHIFT
-        bne @sh
-        lda KEYTAB,X
-        rts
-@ct:    lda KEYTABT,X
-        rts
-@cb:    lda KEYTABC,X
-        rts
-@sh:    lda KEYTABS,X
-        rts
-
-; PETSCII de los 16 codigos de color: CTRL+1..8 (0..7), C=+1..8 (8..15)
-KCOLTAB:
-        .byte $90,$05,$1C,$9F,$9C,$1E,$1F,$9E
-        .byte $81,$95,$96,$97,$98,$99,$9A,$9B
-
-KSHIFT  = $02A3
-
-; SHIFT+RUN/STOP: mete "LOAD" + CR + "RUN" + CR en el bufer de teclado,
-; replicando el atajo del C64. El LOAD sin argumentos usa el dispositivo
-; por defecto (1 = datasette), de ahi la carga de cinta; luego RUN. Son
-; 9 bytes, que es lo que cabe en el bufer de 10. Preserva Y (lo usa el
-; bucle de escaneo). Derivado del comportamiento, no de la ROM original.
-KSRSTUF:
-        tya
-        pha
-        ldx #$00
-@cp:    lda KSRTAB,X
-        beq @fin
-        ldy KNDX
-        cpy #10
-        bcs @fin
-        sta KBUF,Y
-        inc KNDX
-        inx
-        bne @cp
-@fin:   pla
-        tay
-        rts
-
-; ------------------------------------------------------------
-; GETIN: saca un caracter del bufer (A=0, Z=1 si vacio)
-; ------------------------------------------------------------
-KGETIN: lda KDFLTN
-        cmp #$04
-        bcc @noser
-        jmp KSERIN      ; entrada desde el bus serie
-@noser: txa
-        pha             ; preservar X e Y: INLIN del BASIC depende de ello
-        tya
-        pha
-        ldx KNDX
-        beq @empty
-        sei
-        lda KBUF
-        sta KTMP3
-        ldx #$00
-@sh:    lda KBUF+1,X
-        sta KBUF,X
-        inx
-        cpx KNDX
-        bcc @sh
-        dec KNDX
-        cli
-        pla
-        tay
-        pla
-        tax
-        lda KTMP3       ; A = caracter (Z=0 salvo char NUL)
-        rts
-@empty: pla
-        tay
-        pla
-        tax
-        lda #$00
-        rts
-KTMP3   = $F5
+FIJA $E716
+; $E716 (59158, entrada interna conocida): escribir A en la pantalla
+KE716:  jmp KSCROUT
 
 ; ------------------------------------------------------------
 ; CHRIN: espera un caracter, lo devuelve con eco
@@ -917,22 +973,9 @@ KCHRIN: lda KDFLTN
         bne @sc0
         lda KLSTART
         sta KLSTRT2
-@sc0:   ; KVPTR = SCREEN + KSROW*40
-        lda #<SCREEN
-        sta KVPTR
-        lda #>SCREEN
-        sta KVPTR+1
-        ldx KSROW
-@mul:   beq @mulok
-        clc
-        lda KVPTR
-        adc #40
-        sta KVPTR
-        bcc @m2
-        inc KVPTR+1
-@m2:    dex
-        jmp @mul
-@mulok: ; copiar fila de inicio: columnas KLSTRT2..39
+@sc0:   ldx KSROW       ; KVPTR = SCREEN + KSROW*40
+        jsr KROWP
+        ; copiar fila de inicio: columnas KLSTRT2..39
         ldx #$00        ; X = longitud en KLINE
         stx KLQ         ; fuera de comillas al empezar
         ldy KLSTRT2
@@ -982,113 +1025,83 @@ KCHRIN: lda KDFLTN
         sta KLPOS
         jmp @servir
 
-; codigo de pantalla (A) -> PETSCII (A) al leer la linea. Dentro de
-; comillas, un caracter invertido es un control escrito en modo comillas
-; ($80-$9F -> $00-$1F, $C0-$DF -> $80-$9F); fuera, el inverso se ignora.
-KSC2P:  cmp #$22
-        bne @n
-        inc KLQ         ; comilla: conmuta (bit0)
-        rts
-@n:     cmp #$80
-        bcc @norm
-        pha
-        lda KLQ
-        lsr a
-        pla
-        bcc @norm       ; fuera de comillas
-        and #$7F
-        cmp #$20
-        bcc @r          ; control $00-$1F
-        cmp #$40
-        bcc @norm2
-        cmp #$60
-        bcs @norm2
-        adc #$40        ; $40-$5F -> control $80-$9F (C=0)
-@r:     rts
-@norm:  and #$7F
-@norm2: cmp #$20
-        bcc @a40        ; sc 0-31 -> PETSCII $41-$5F
-        cmp #$40
-        bcc @r          ; sc $20-$3F: identico
-        adc #$7F        ; sc $40-$7E -> PETSCII $C0+ (C=1: +$80)
-        rts
-@a40:   adc #$40        ; (C=0)
-        rts
+; tabla con shift
+KEYTABS:
+        .byte $94,$0D,$9D,$8C,$89,$8A,$8B,$91  ; INS RET csrLR F8 F2 F4 F6 csrUD
+        .byte '#','W'+$80,'A'+$80,'$','Z'+$80,'S'+$80,'E'+$80,$00
+        .byte '%','R'+$80,'D'+$80,'&','C'+$80,'F'+$80,'T'+$80,'X'+$80
+        .byte $27,'Y'+$80,'G'+$80,'(','B'+$80,'H'+$80,'U'+$80,'V'+$80
+        .byte ')','I'+$80,'J'+$80,'0','M'+$80,'K'+$80,'O'+$80,'N'+$80
+        .byte '+','P'+$80,'L'+$80,'-','>','[','@','<'
+        .byte $5C,'*',']',$93,$00,'=',$5E,'?'  ; shift+HOME = CLR
+        .byte '!',$5F,$00,'"',' ',$00,'Q'+$80,$83  ; shift+2=comillas; shift+RUN/STOP=LOAD+RUN
 
-; apagar el cursor si esta invertido (auxiliar del editor)
-KCUROFF:
-        pha
-        lda KBLON
-        beq @no
-        php             ; (CHROUT la llama con IRQ ya enmascaradas)
-        sei
+; tabla CTRL. CTRL+1..8 colores, +9/0 inverso, CTRL+letra = codigo de
+; control PETSCII (1..26), mas algunos simbolos. Valores tomados del
+; comportamiento publico documentado (sta.c64.org), no de desensamblado.
+; $00 = sin caracter (lo descarta el escaneo, igual que los huecos $FF
+; del C64 real, que aqui no se pueden usar como centinela).
+KEYTABT:
+        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
+        .byte $1C,$17,$01,$9F,$1A,$13,$05,$00  ; 3 W A 4 Z S E -
+        .byte $9C,$12,$04,$1E,$03,$06,$14,$18  ; 5 R D 6 C F T X
+        .byte $1F,$19,$07,$9E,$02,$08,$15,$16  ; 7 Y G 8 B H U V
+        .byte $12,$09,$0A,$92,$0D,$0B,$0F,$0E  ; 9 I J 0 M K O N
+        .byte $00,$10,$0C,$00,$00,$1B,$00,$00  ; + P L - . : @ ,
+        .byte $1C,$00,$1D,$00,$00,$1F,$1E,$00  ; libra * ; HOME - = flecha /
+        .byte $90,$00,$00,$05,$00,$00,$11,$00  ; 1 <- CTRL 2 SPC C= Q STOP
+
+; tabla C= (Commodore). C=+letra = grafico izquierdo (PETSCII $A1..$BF),
+; C=+1..8 = colores claros, y los simbolos @ + libra emiten su grafico.
+; El resto no emite nada. Fuente: comportamiento publico (sta.c64.org).
+KEYTABC:
+        .byte $00,$00,$00,$00,$00,$00,$00,$00  ; DEL RET csrLR F7 F1 F3 F5 csrUD
+        .byte $96,$B3,$B0,$97,$AD,$AE,$B1,$00  ; 3 W A 4 Z S E -
+        .byte $98,$B2,$AC,$99,$BC,$BB,$A3,$BD  ; 5 R D 6 C F T X
+        .byte $9A,$B7,$A5,$9B,$BF,$B4,$B8,$BE  ; 7 Y G 8 B H U V
+        .byte $00,$A2,$B5,$00,$A7,$A1,$B9,$AA  ; 9 I J 0 M K O N
+        .byte $A6,$AF,$B6,$00,$00,$00,$A4,$00  ; + P L - . : @ ,
+        .byte $A8,$00,$00,$00,$00,$00,$00,$00  ; libra * ; HOME - = flecha /
+        .byte $81,$00,$00,$95,$00,$00,$AB,$00  ; 1 <- CTRL 2 SPC C= Q STOP
+
+; SHIFT+RUN/STOP: mete "LOAD" + CR + "RUN" + CR en el bufer de teclado,
+; replicando el atajo del C64. El LOAD sin argumentos usa el dispositivo
+; por defecto (1 = datasette), de ahi la carga de cinta; luego RUN. Son
+; 9 bytes, que es lo que cabe en el bufer de 10. Preserva Y (lo usa el
+; bucle de escaneo). Derivado del comportamiento, no de la ROM original.
+KSRSTUF:
         tya
         pha
-        ldy KCOL
-        lda (KPNT),Y
-        eor #$80
-        sta (KPNT),Y
-        lda KPNT        ; restaurar el color guardado bajo el cursor
-        sta KCPTR
-        lda KPNT+1
-        clc
-        adc #$D4
-        sta KCPTR+1
-        lda KGDCOL
-        sta (KCPTR),Y
-        lda #$00
-        sta KBLON
-        pla
+        ldx #$00
+@cp:    lda KSRTAB,X
+        beq @fin
+        ldy KNDX
+        cpy #10
+        bcs @fin
+        sta KBUF,Y
+        inc KNDX
+        inx
+        bne @cp
+@fin:   pla
         tay
-        plp
-@no:    pla
         rts
 
-; KLINE: bufer de la linea logica leida de pantalla (hasta 80 bytes).
-; Comparte direccion con el BUF del BASIC ($0200, 81 bytes). Es seguro
-; porque quien consume CHRIN (INLIN del BASIC, o un lector de codigo
-; maquina tipico) guarda el caracter k en la posicion <= k DESPUES de que
-; el editor lo haya servido: nunca pisa algo que quede por leer.
-; Antes estaba en $033C (buffer de cinta, 828): cada linea tecleada
-; machacaba las rutinas de usuario que se cargan ahi (POKE + SYS 828).
-KLINE   = $0200
-KLLEN   = $C8
-KLPOS   = $CE
-KLSTART = $CA
-KCOLOR  = $0286         ; color actual del cursor/texto
-KGDCOL  = $0287         ; color guardado bajo el cursor (ubicacion C64)
-KMBOT   = $0281         ; inicio de memoria (2 bytes)
-KMTOP   = $0283         ; tope de memoria (2 bytes)
+; KROWP: KVPTR = SCREEN + X*40 (X = fila 0-24). Destruye A y X.
+KROWP:  lda #<SCREEN
+        sta KVPTR
+        lda #>SCREEN
+        sta KVPTR+1
+@m:     dex
+        bmi @r
+        clc
+        lda KVPTR
+        adc #40
+        sta KVPTR
+        bcc @m
+        inc KVPTR+1
+        bne @m          ; siempre (el byte alto nunca es 0)
+@r:     rts
 
-KRVS    = $C7           ; flag de inverso ($00/$80); direccion documentada (199)
-KQTSW   = $D4           ; modo comillas (bit0); direccion documentada (212)
-KINSRT  = $D8           ; espacios insertados pendientes (modo insercion, 216)
-KLQ     = $F8           ; comillas vistas al leer la linea de pantalla (bit0)
-KCTRL   = $02A4
-KCBM    = $02A5
-KCASE   = $0292         ; flanco de SHIFT+C=
-KLNK    = $D9           ; tabla de enlace de lineas (25 bytes, $D9-$F1, como el C64)
-KROW    = $D6           ; fila del cursor 0-24 (direccion documentada, 214)
-KEDROW  = $C9           ; fila donde empezo la entrada
-KSROW   = $D0           ; fila de inicio de la linea logica
-KLSTRT2 = $D5           ; columna inicial efectiva
-KLNKV   = $F6           ; valor a estampar en KLNK (inicio/continuacion)
-KCNT    = $FA
-KSCR0   = $F7
-KSCRCNT = $F9
-
-; ------------------------------------------------------------
-; STOP: Z=1 si RUN/STOP pulsada
-; ------------------------------------------------------------
-; ISTOP ($0328/$FFE1) tal como lo espera el BASIC PET: si RUN/STOP esta
-; pulsada, rompe la ejecucion saltando a STOP del BASIC (imprime BREAK
-; y vuelve a READY). Si no, devuelve con el flag.
-KSTOP:  jsr KSTOPRAW
-        bne @ret        ; no pulsada: volver con el flag
-        lda #$00        ; Z=1 y...
-        sec             ; ...C=1 -> STOP imprime "BREAK" y va a READY
-        jmp STOP
-@ret:   rts
 ; escaneo puro de RUN/STOP (sin romper): Z=1 si pulsada. Lo usa el NMI.
 ; Atomico: el IRQ tambien escanea la matriz; sin SEI, un IRQ entre la
 ; lectura y el test simula una pulsacion. El resultado viaja en X, que
@@ -1116,6 +1129,42 @@ KUDTIM: inc KTIME+2
         bne @r
         inc KTIME
 @r:     rts
+
+
+FIJA $E9FF
+; KCLRLN ($E9FF): borra la fila X (0-24) de la pantalla con espacios y
+; pone su RAM de color al color de texto actual. Usa KVPTR.
+KCLRLN: jsr KROWP
+        ldy #39
+        lda #$20
+@l1:    sta (KVPTR),Y
+        dey
+        bpl @l1
+        lda KVPTR+1
+        clc
+        adc #>(COLOR-SCREEN)
+        sta KVPTR+1
+        ldy #39
+        lda KCOLOR
+@l2:    sta (KVPTR),Y
+        dey
+        bpl @l2
+        rts
+
+KROWSEL: .byte $FE,$FD,$FB,$F7,$EF,$DF,$BF,$7F
+
+; ------------------------------------------------------------
+; STOP: Z=1 si RUN/STOP pulsada
+; ------------------------------------------------------------
+; ISTOP ($0328/$FFE1) tal como lo espera el BASIC PET: si RUN/STOP esta
+; pulsada, rompe la ejecucion saltando a STOP del BASIC (imprime BREAK
+; y vuelve a READY). Si no, devuelve con el flag.
+KSTOP:  jsr KSTOPRAW
+        bne @ret        ; no pulsada: volver con el flag
+        lda #$00        ; Z=1 y...
+        sec             ; ...C=1 -> STOP imprime "BREAK" y va a READY
+        jmp STOP
+@ret:   rts
 
 ;.org $EA31: manejador principal del IRQ (destino por defecto de $0314).
 ; Direccion canonica: los programas encadenan su IRQ con JMP $EA31.
@@ -1195,11 +1244,6 @@ KSCROLL:
         inx
         cpx #<(1000-40-$300)
         bne @s4
-        ldx #39         ; limpiar ultima fila
-        lda #$20
-@s5:    sta SCREEN+960,X
-        dex
-        bpl @s5
         ; cursor a inicio de la ultima fila
         lda #<(SCREEN+960)
         sta KPNT
@@ -1224,11 +1268,8 @@ KSCROLL:
         inx
         cpx #<(1000-40-$300)
         bne @cs4
-        ldx #39         ; ultima fila de color = color actual
-        lda KCOLOR
-@cs5:   sta COLOR+960,X
-        dex
-        bpl @cs5
+        ldx #24         ; limpiar la ultima fila (espacios y color actual)
+        jsr KCLRLN
         ; desplazar la tabla de enlace una fila hacia arriba
         ldx #$00
 @shk:   lda KLNK+1,X
@@ -1313,13 +1354,6 @@ KVECTOR:
         bpl @v
         rts
 
-KBLCNT  = $CD           ; cuenta del parpadeo (documentado)
-KBLON   = $CF           ; cursor encendido (documentado)
-KBLSW   = $9F
-KLCOL   = $028C
-KLMASK  = $028E
-KLIDX   = $9E
-KRPT    = $028B         ; contador de repeticion (KOUNT)
 
 KSTUB:  clc
         rts
@@ -1370,22 +1404,13 @@ KPLOT:  bcc @set
         rts
 @set:   stx KROW
         sty KCOL
-        ; KPNT = SCREEN + fila*40
-        lda #<SCREEN
+        jsr KROWP       ; KPNT = SCREEN + fila*40
+        lda KVPTR
         sta KPNT
-        lda #>SCREEN
+        lda KVPTR+1
         sta KPNT+1
-        cpx #$00
-        beq @done
-@m:     clc
-        lda KPNT
-        adc #40
-        sta KPNT
-        bcc @m2
-        inc KPNT+1
-@m2:    dex
-        bne @m
-@done:  rts
+        ldx KROW
+        rts
 ; IOBASE ($FFF3): X/Y = base de E/S (CIA1 = $DC00)
 KIOBASE:
         ldx #$00
