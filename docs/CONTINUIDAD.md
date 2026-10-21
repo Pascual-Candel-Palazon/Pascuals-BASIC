@@ -174,8 +174,8 @@ xvfb-run -a x64sc -default \
   (sta.c64.org). test_keymods: 64 casos.
 - SETTMO ($FFA2): guarda A en KTIMOUT ($0285); antes era un stub.
 - BLOAD (43f1eba): si una carga relocalizada deja menos de 2 bytes, fuerza
-  un programa vacio ($00 $00) antes de LNKPRG. **Pendiente de validar en
-  VICE** (no se hizo).
+  un programa vacio ($00 $00) antes de LNKPRG. Validado en VICE el 21 oct
+  (seccion 20).
 - KUNLSN (b876e1c): el $3F se cargaba antes de KATNLO/KCLKLO/KATNDLY, que
   destruyen A; ahora se recarga justo antes de KISEND. Verificado en
   simulacion dual C64+1541 y en VICE (dos `LOAD"$",8` sin disco seguidos
@@ -558,8 +558,8 @@ HECHO y VERIFICADO (esta sesion, contra el 1541 real en VICE true-drive):
 
 Pendiente:
 0. Antes de seguir con funciones nuevas: recuperar lo perdido (sec. 12),
-   validar en VICE la guarda de BLOAD (43f1eba). (El hueco de ZP de
-   AUDITORIA.md quedo resuelto en la seccion 17.)
+   (la guarda de BLOAD quedo validada en la seccion 20 y el hueco de ZP
+   de AUDITORIA.md en la 17).
 1. Post-1.0: chargen propio; recolector de basura de cadenas lineal (desde
    descripcion algoritmica publica, NUNCA desensamblados); ROM libre del
    1541 (proyecto hermano).
@@ -747,7 +747,7 @@ algunos commits queda corregido aqui:
 | b324db0 | "Update" | Cambio de permisos hecho desde Windows: quito el bit de ejecucion a build.sh y tests/run_all.sh. Corregido el 20 oct. |
 | 020c21c, 97bae4e | "Update README.md" | Editados en la web: anaden la captura de pantalla; el segundo dejo la imagen pegada a "## Status" y rompio el titulo. Corregido el 20 oct. |
 | 9624179 .. b876e1c | (no lo mencionan) | Cambiaron src/kernal.s sin regenerar bin/: las ROMs publicadas quedaron desfasadas hasta el 20 oct. |
-| 43f1eba | "Pendiente de validacion en VICE" | La validacion no se llego a hacer. Sigue pendiente. |
+| 43f1eba | "Pendiente de validacion en VICE" | Validado el 21 oct (seccion 20). |
 | b876e1c | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
 | 4207426 | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (60a09ac, af65a4e) con los tres commits hechos en la web; sin conflictos. |
 | rama fix-bload-guard | | Ya fusionada (PR #1). Se puede borrar en GitHub. |
@@ -1121,3 +1121,48 @@ Probado:
   la pantalla de $2000, CLR, PRINT, una orden y un bucle con scroll. Las
   dos pantallas salen iguales y el cursor parpadea en su sitio.
 - Bateria completa en verde (23 tests).
+
+
+## 20. DEL en INLIN, CHKIN/CHKOUT y guarda de BLOAD (21 oct 2026)
+
+**Delta de DEL en INLIN, retirado.** translate.py hacia que INLIN tratara
+$14 como retroceso. AUDITORIA.md lo daba por codigo muerto, pero no lo
+era: INLIN ve $14 cuando es un caracter de verdad.
+- Con el teclado no se notaba solo por casualidad: CHRIN de pantalla
+  devuelve en X su propio indice, que coincide con el de INLIN porque la
+  linea del editor esta en el mismo $0200 que BUF. El DEX de INLIN se
+  perdia.
+- Con un fichero si se notaba: KSERIN conserva X. En VICE, con la 1541,
+  `PRINT#2,"AB"CHR$(20)"CD"` y despues `INPUT#2,A$` daba A$="ACD"
+  (LEN 3); la ROM original da los 5 caracteres con el CHR$(20) en la
+  tercera posicion. Sin el delta, igual que el original.
+
+**CHKIN/CHKOUT devolvian en X el indice de la tabla de ficheros**, no el
+numero de fichero logico. El BASIC hace `STX CHANNL` justo despues, asi
+que con el primer fichero abierto (indice 0) CHANNL quedaba a 0 y el
+BASIC creia estar leyendo del teclado: INPUT# escribia "? " en pantalla.
+Ahora los dos guardan X a la entrada y la devuelven al salir (10 bytes).
+En VICE, INPUT#, GET# y PRINT# a la 1541 dan la misma pantalla que la ROM
+original. tests/test_canales.py (CHKIN/CHKOUT devuelven X; INPUT#1 desde
+el teclado sin "?").
+
+Diferencia que queda: tras leer el final de un fichero, un GET# mas deja
+ST=64 en nuestra ROM y ST=66 (fin de fichero + tiempo agotado) en la
+original.
+
+**Guarda de BLOAD (43f1eba), validada en VICE.** Con un programa en
+memoria (`10 PRINT"VIEJO"`, `20 GOTO 10`) y la 1541:
+- PRG de 1 byte de datos: nuestra ROM deja un programa vacio (LIST no
+  muestra nada, FRE(0) da -26627, es decir 38909 libres) y se puede
+  teclear y ejecutar un
+  programa nuevo. La ROM original, en cambio, reenlaza la memoria rancia
+  y LIST vuelve a mostrar el programa viejo; al seguir tecleando acaba
+  colgada. La guarda se queda: es una diferencia a favor.
+- PRG de 2 bytes ($00 $00): igual en las dos.
+- PRG sin datos (solo la direccion de carga): la original se queda
+  colgada en LOADING; la nuestra da `?DEVICE NOT PRESENT  ERROR` con
+  ST=-128 y conserva el programa. No es la guarda (la carga no llega a
+  terminar), pero el mensaje no es el adecuado: queda anotado.
+
+Probado: bateria completa en verde (24 tests); VICE como se describe.
+KERNAL libre: 81 bytes.

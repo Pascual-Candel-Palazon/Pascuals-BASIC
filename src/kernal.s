@@ -1941,8 +1941,11 @@ KCLOSE: pha             ; guardar num de fichero logico
         rts
 ; CHKIN ($FFC6): X = fichero logico -> canal de entrada
 KCHKIN: txa
+        pha             ; el fichero logico vuelve en X (el BASIC hace STX CHANNL)
         jsr KFINDFL
         bcs @hay
+        pla
+        tax
         lda #$03        ; error 3: fichero no abierto
         sec
         rts
@@ -1957,12 +1960,17 @@ KCHKIN: txa
         jsr KTALK       ; A = dispositivo -> TALK
         pla
         jsr KTKSA
-@done:  clc
+@done:  pla
+        tax
+        clc
         rts
 ; CHKOUT ($FFC9): X = fichero logico -> canal de salida
 KCHKOUT: txa
+        pha             ; el fichero logico vuelve en X (el BASIC hace STX CHANNL)
         jsr KFINDFL
         bcs @hay
+        pla
+        tax
         lda #$03
         sec
         rts
@@ -1977,7 +1985,9 @@ KCHKOUT: txa
         jsr KLISTN      ; A = dispositivo -> LISTEN
         pla
         jsr KSECND
-@done:  clc
+@done:  pla
+        tax
+        clc
         rts
 
 ; ------------------------------------------------------------

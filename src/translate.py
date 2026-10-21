@@ -477,19 +477,12 @@ result = _re.sub(r"CQTIMR\s*=\s*141", "CQTIMR = 160", result)
 result = result.replace("FPWRT:\tBEQ\tEXP\t",
                         "FPWRT:\tJEQ\tEXP\t; [fixup: rama original fuera de rango en este layout]")
 if C64:
-    # Delta C64: INLIN minimo del fuente no maneja DEL ($14); sin editor de
-    # pantalla en el kernal, el retroceso debe hacerse aqui o el caracter
-    # entra en el bufer y corrompe la linea.
-    result = result.replace(
-        "INLINC:\tJSR\tINCHR\t;GET A CHARACTER.\n\n\tCMPI\t13\t;CARRIAGE RETURN?\n\tBEQ\tFININ1\t;YES, FINISH UP.",
-        "INLINC:\tJSR\tINCHR\t;GET A CHARACTER.\n\n\tCMPI\t13\t;CARRIAGE RETURN?\n"
-        "\tBEQ\tFININ1\t;YES, FINISH UP.\n"
-        "\tCMPI\t20\t;[C64] DEL?\n"
-        "\tBNE\tGOODCH\n"
-        "\tCPXI\t0\t;[C64] nada que borrar al inicio\n"
-        "\tBEQ\tINLINC\n"
-        "\tDEX\t;[C64] retroceder el indice del bufer\n"
-        "\tJMP\tINLINC")
+    # (Retirado: un delta antiguo hacia que INLIN tratara $14 como
+    # retroceso. El editor del KERNAL ya borra en pantalla, asi que INLIN
+    # solo ve $14 cuando es un caracter de verdad: un DEL incrustado en una
+    # cadena (INST y DEL en comillas) o un byte de un fichero en INPUT#.
+    # Con el delta, INPUT# de "AB"+CHR$(20)+"CD" daba "ACD" en vez de los
+    # 5 caracteres del C64.)
     # Delta C64: el sondeo de RAM del PET corta en $8000 (32K). En C64 el
     # limite natural es $A000 (la propia ROM hace fallar el test), pero
     # mantenemos un tope explicito por robustez.
