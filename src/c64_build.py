@@ -24,6 +24,17 @@ for pc, tgt in secs:
 # tamano de cada seccion = pc del siguiente .org - direccion de esta...
 # el PC del listado ya esta en espacio logico: la longitud emitida de la
 # seccion k = (pc_org_{k+1} - dest_k); la ultima llega al final del fichero.
+# Guarda: una seccion no puede invadir la siguiente .org. ld65 emite las
+# secciones seguidas y el troceado de abajo copiaria la siguiente ENCIMA
+# del final de esta sin avisar (asi se rompio el SAVE de cinta: el codigo
+# crecio por encima del trampolin de $FD15 y lo piso). Se aborta el build.
+for k in range(len(starts) - 1):
+    pc_fin, dest = starts[k + 1][0], starts[k][1]
+    sig = starts[k + 1][1]
+    if sig > dest and pc_fin > sig:
+        raise SystemExit(f"SOLAPE: la seccion .org ${dest:04X} llega hasta "
+                         f"${pc_fin:04X} y pisa la siguiente .org ${sig:04X} "
+                         f"({pc_fin - sig} bytes de mas)")
 data = open("c64_full.bin", "rb").read()
 off = 0
 for k, (pc, dest) in enumerate(starts):
