@@ -202,7 +202,7 @@ xvfb-run -a x64sc -default \
   CQSAVE->BSAVE, CQOPEN->BOPEN, CQCLOS->BCLOSE.
 - **Envio por el bus: FUNCIONA, VERIFICADO byte a byte.**
   Primitivas `KLISTN/KTALK/KSECND/KTKSA/KCIOUT/KUNLSN/KUNTLK` + `KISEND`,
-  todas con SEI/CLI. `KCIOUT` hace envio DIFERIDO para el EOI. Verificado
+  todas con PHP/SEI ... PLP (seccion 22). `KCIOUT` hace envio DIFERIDO para el EOI. Verificado
   escribiendo ficheros SEQ/PRG y releyendolos con `c1541 -extract` (los
   bytes coinciden exactamente, sin byte extra; el EOI cae en el ultimo).
 - **Recepcion: FUNCIONA, VERIFICADA byte a byte con EOI.** `KACPTR` lee
@@ -465,7 +465,8 @@ py65 (arnes) NO modela el bus ($DD00 es RAM): solo VICE valida el bus.
 1. **Timeout RFD en re-direccionamiento (@wr de KISEND):** al re-abrir un
    canal con fichero ya abierto, el 1541 tarda mas de ~0.9ms en soltar
    DATA (RFD). Solucion: timeout extendido de 24 bits con `KSERHI` ($A7),
-   `cmp #$40` (~58ms).
+   `cmp #$40` (~55 s, no ~58 ms como decia antes: 64 x 65536 vueltas de
+   13 ciclos; ver seccion 22).
 2. **KACPTR reescrito:** (a) orden correcto del handshake: esperar CLOCK
    alto (RTS) ANTES de soltar DATA (RFD), no al reves; (b) muestrear DATA
    con **CLOCK alto** (ventana valida), no en la bajada (carrera con la
@@ -529,8 +530,9 @@ DATA, espera CLOCK bajo; ack final con DATA bajo.
    dependa de X/Y debe preservarlos.**
 2. **El listado debe ir sincronizado con el binario** (ver seccion 4).
 3. **SEI durante el bit-banging serie**: el IRQ del jiffy interrumpe el
-   timing. Todas las rutinas de bit (KISEND, KACPTR) hacen SEI al entrar
-   y CLI en TODAS las salidas.
+   timing. Todas las rutinas de bit (KISEND, KACPTR) hacen PHP/SEI al
+   entrar y PLP en TODAS las salidas, y las secuencias de ATN y de
+   turnaround van enteras sin IRQ (seccion 22).
 4. **El arnes (`py65`) es flaky por dependencia de ciclos**: tests como
    `test_editor`/`test_iec_fase2a`/`test_iec_fase3parse` pueden fallar en
    lote y pasar corridos en solitario. Ante un FALLO suelto, re-correr el
@@ -1215,3 +1217,61 @@ Probado:
   sigue bien.
 
 Queda de la cinta: los ficheros de datos (`OPEN 1,1`).
+
+## 22. Bus serie sin IRQ en ATN y turnaround, EOI, PRINT# y errores con canal abierto (23 oct 2026)
+
+Fallos encontrados probando la 1541 libre (Pascual_DOS-1541) con estas
+ROMs en VICE. Cada uno se reprodujo antes de tocar nada y se comparo con
+la ROM original del C64 en VICE como caja negra (solo pantalla, ST y el
+disco leido con c1541).
+
+1. **IRQ en mitad del protocolo.** `KISEND` y `KACPTR` acababan con CLI;
+   `KTKSA` esperaba el turnaround (`@tw`) con IRQ activas y `KLSTN2`,
+   `KUNLSN` y `KUNTLK` bajaban ATN con IRQ activas antes de bajar CLK. Si
+   el IRQ del teclado caia tras soltar CLK, el C64 no veia el pulso de CLK
+   con el que la unidad toma el bus y `@tw` daba ST=$80.
+   Reproduccion: dos.bin de Pascual_DOS-1541 6cf8010 sin el bucle `@hold`
+   de `iec_turnaround`, 20 pasadas de INPUT# sobre un SEQ de 50 registros
+   mirando ST tras cada INPUT#: 7 lecturas con ST=-128 (128) y 868 de
+   1000 registros buenos. La ROM original con esa misma unidad: 1000 de
+   1000. Correccion: `KISEND`/`KACPTR` usan PHP/SEI ... PLP; `KLSTN2`,
+   `KSECND`, `KTKSA`, `KUNLSN` y `KUNTLK` corren enteras con PHP/SEI y
+   salen por `KPLPC`, que hace PLP conservando el C de resultado. Ya no se
+   fuerza CLI: se restaura la I del llamante. Tras la correccion: 2000 de
+   2000 en dos tandas, sin ningun ST raro.
+2. **Esperas.** La ventana de EOI de `KACPTR` (`@w2`) era de 65536 vueltas
+   (~0,85 s, el comentario decia ~256 us): cada ultimo byte (fin de
+   fichero, el CR del canal 15) costaba casi un segundo. Ahora son 20
+   vueltas de 13 ciclos (~260 us; la especificacion publica da 200 us).
+   10 lecturas del canal 15: 8,8 s antes, 0,6 s ahora. Las esperas de
+   "unidad lista" (`KISEND @wr`, `KACPTR @w1`) se dejan en ~55 s y se
+   corrige el comentario (decia ~58 ms). `@w2b` (tras el reconocimiento de
+   EOI) baja de ~55 s a ~0,85 s: por especificacion el emisor sigue en
+   unos 60 us, y por encima del tiempo de leer un sector.
+3. **PRINT# mandaba CR+LF.** El fuente MS manda siempre CR+LF; el C64
+   solo anade LF con ficheros logicos >= 128. Delta en `translate.py`
+   (GOCR). Original y libre dejan ahora lo mismo en disco: "AB"+CR+"CD"+CR
+   con el fichero 2 y "AB"+CR+LF+"CD" con el 130. Test:
+   `tests/test_finlinea.py`.
+4. **INPUT# en modo directo daba ?NEXT WITHOUT FOR.** El C64 tambien lo
+   rechaza, pero con ?ILLEGAL DIRECT. La causa: ERROR cierra el canal con
+   CLRCHN y CLRCHN (interfaz publica: afecta a A y X) destruye X, el
+   codigo de error, cuando hay un canal serie abierto. Delta en
+   `translate.py`: TXA/PHA ... PLA/TAX alrededor de la llamada. Arregla
+   igual cualquier error con un canal serie activo (?BAD DATA en INPUT#,
+   por ejemplo).
+5. **LOAD de un fichero inexistente no daba ?FILE NOT FOUND.** La 1541
+   (original y libre) responde al TALK con EOI y sin byte; el C64 original
+   lo ve como ST=66 ($42: EOI + timeout de lectura) y LOAD da FILE NOT
+   FOUND. El libre esperaba ~55 s en `@w2b`, devolvia ST=64 y LOAD
+   terminaba "bien". Ahora `@w2b` marca ST bit1, LOAD mira ese bit tras el
+   primer byte (error 4) y "LOADING" sale solo si el fichero existe, como
+   en el C64. GET# de un fichero inexistente: ST=66 en ~1 s (antes 64 en
+   ~50 s; la ROM original tarda unos ms).
+
+Espacio: KERNAL libre 152 -> 118 bytes; el BASIC crece 8 bytes (acaba en
+$BFE8).
+
+Visto de paso y NO corregido: SYS no carga A/X/Y/P desde 780-783 ni los
+guarda al volver (en la ROM original `POKE780,65:SYS65490` imprime "A";
+en la libre no).

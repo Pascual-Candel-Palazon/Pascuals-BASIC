@@ -579,6 +579,28 @@ if C64:
     # ("?SYNTAX  ERROR", "?FILE OPEN  ERROR"); comprobado en VICE con la ROM
     # original como caja negra.
     _rep('ERR:\tDT " ERROR" ', 'ERR:\tDT "  ERROR" ;[C64] dos espacios ')
+    # Delta C64: fin de linea de PRINT/PRINT#/CMD. El fuente manda siempre
+    # CR+LF; el C64 manda solo CR y anade el LF unicamente cuando el fichero
+    # logico es 128 o mayor (Programmer's Reference Guide, nivel A). En
+    # pantalla no cambia nada. A sigue valiendo 10 antes del EORI, como antes.
+    # Comprobado en VICE con la ROM original como caja negra:
+    # OPEN2..:PRINT#2,"AB" deja "AB"+CR; con el fichero 130, "AB"+CR+LF.
+    _rep("GOCR:\tLDAI\t13\t;X AND Y MUST BE PRESERVED.\n"
+         "\tJSR\tOUTDO\t\n\tLDAI\t10\t\n\tJSR\tOUTDO\t\nCRFIN:",
+         "GOCR:\tLDAI\t13\t;X AND Y MUST BE PRESERVED.\n"
+         "\tJSR\tOUTDO\t\n\tLDAI\t10\t\n"
+         "\tBIT\tCHANNL\t;[C64] LF solo si el fichero logico es >= 128\n"
+         "\tBPL\tCRFIN\t\n\tJSR\tOUTDO\t\nCRFIN:")
+    # Delta C64: ERROR cierra el canal con CLRCHN antes de imprimir el
+    # mensaje, pero CLRCHN no conserva X (interfaz publica: "registros
+    # afectados A, X") y X es el codigo de error. Con un canal serie activo
+    # (INPUT# en modo directo, ?BAD DATA en INPUT#...) salia el mensaje del
+    # indice 0, "?NEXT WITHOUT FOR". El C64 da el mensaje correcto
+    # (comprobado en VICE con la ROM original: INPUT#15,A en directo da
+    # ?ILLEGAL DIRECT), asi que se guarda X alrededor de la llamada.
+    _rep("\tJSR\tCQCCHN\t;CLOSE IT.\n",
+         "\tTXA\t;[C64] CLRCHN destruye X, que es el codigo de error\n"
+         "\tPHA\t\n\tJSR\tCQCCHN\t;CLOSE IT.\n\tPLA\t\n\tTAX\t\n")
     _rep("\tJSR\tFLOATC\t\n\tJSR\tFOUT\t\nSTROU2:",
          "\tJSR\tFLOATC\t\n"
          "\tLDYI\t0\t;[C64] signo en LOFBUF: sin espacio delante\n"
