@@ -1492,9 +1492,25 @@ KATNHI: lda SERPRT
         sta SERPRT
         rts
 
+; Interrupciones y bus: un IRQ entre asertar ATN y asertar CLK, o entre
+; soltar CLK en el turnaround y ver que la unidad lo toma, hace que la
+; unidad lea un flanco que no es o que el C64 no vea el suyo (ST=$80 o
+; bytes perdidos). Cada secuencia, de ATN al final del turnaround o del
+; UNLISTEN/UNTALK, corre entera con PHP/SEI y sale por KPLPC, que
+; restaura la I del llamante (sin forzar CLI) y conserva el C de salida.
+KPLPC:  bcs @c1
+        plp
+        clc
+        rts
+@c1:    plp
+        sec
+        rts
+
 ; LISTEN ($FFB1): A = dispositivo
 KLISTN: ora #$20
-KLSTN2: pha
+KLSTN2: php
+        sei
+        pha
         jsr KATNLO
         jsr KCLKLO
         jsr KDATHI
@@ -1511,20 +1527,23 @@ KLSTN2: pha
         pla
         sec
         ror KATNF       ; modo ATN
-        jmp KISEND
+        jsr KISEND
+        jmp KPLPC
 
 ; TALK ($FFB4): A = dispositivo
 KTALK:  ora #$40
         jmp KLSTN2
 
 ; SECOND ($FF93): A = secundaria tras LISTEN
-KSECND: sec
+KSECND: php
+        sei
+        sec
         ror KATNF
         jsr KISEND
         jsr KATNHI      ; liberar ATN: empieza la fase de datos
-        rts
+        jmp KPLPC
 
-; retardo de respuesta a ATN (~1ms)
+; retardo de respuesta a ATN (~5 ms: 4 x 256 vueltas de 5 ciclos)
 KATNDLY:txa
         pha
         tya
@@ -1542,7 +1561,9 @@ KATNDLY:txa
         rts
 
 ; TKSA ($FF96): A = secundaria tras TALK, con turnaround talker->oyente
-KTKSA:  sec
+KTKSA:  php             ; sin IRQ hasta ver que la unidad toma CLK
+        sei
+        sec
         ror KATNF
         jsr KISEND
         jsr KDATLO      ; somos oyentes: asertar DATA
@@ -1559,7 +1580,7 @@ KTKSA:  sec
         bne @tw
         lda #$80        ; timeout: dispositivo no presente
         sta KSTATUS
-@twok:  rts
+@twok:  jmp KPLPC
 
 ; CIOUT ($FFA8): A = byte de datos (envio diferido para el EOI)
 KCIOUT: bit KC3PO
@@ -1578,6 +1599,8 @@ KCIOUT: bit KC3PO
 
 ; UNLSN ($FFAE): enviar el ultimo byte con EOI y luego UNLISTEN
 KUNLSN: jsr KISCLR
+        php             ; sin IRQ de ATN al final del UNLISTEN
+        sei
         lda KSTATUS
         pha             ; preservar el estado real de la transferencia
         sec
@@ -1591,7 +1614,9 @@ KUNLSN: jsr KISCLR
         sta KSTATUS     ; restaurar (el dispositivo libera el bus, no hace ack)
         jmp KATNFIN
 ; UNTLK ($FFAB): UNTALK
-KUNTLK: lda KSTATUS
+KUNTLK: php             ; sin IRQ de ATN al final del UNTALK
+        sei
+        lda KSTATUS
         pha
         sec
         ror KATNF
@@ -1604,7 +1629,7 @@ KUNTLK: lda KSTATUS
         sta KSTATUS
 KATNFIN:jsr KATNHI
         jsr KCLKHI
-        rts
+        jmp KPLPC       ; la P la apilaron KUNLSN/KUNTLK
 
 ; KISCLR: si hay byte pendiente, enviarlo con EOI
 KISCLR: bit KC3PO
@@ -1621,7 +1646,8 @@ KISCLR: bit KC3PO
 ; KISEND: enviar un byte (A). KATNF bit7=ATN, KEOIF bit7=EOI.
 ; C=1 si timeout (dispositivo no presente).
 KISEND: sta KBSOUR2
-        sei             ; el timing serie no tolera interrupciones
+        php             ; el timing serie no tolera interrupciones; al salir
+        sei             ; se restaura la I del llamante (no CLI a ciegas)
         jsr KDATHI      ; liberar NUESTRA DATA (la posee el oyente)
         jsr KCLKHI      ; liberar CLOCK = "emisor listo para enviar" (RTS)
         ; esperar a que el oyente libere DATA (alto) = "listo para datos" (RFD).
@@ -1639,7 +1665,8 @@ KISEND: sta KBSOUR2
         bne @wr
         inc KSERHI
         lda KSERHI
-        cmp #$40        ; ~58ms: un 1541 con fichero abierto tarda en hacer RFD
+        cmp #$40        ; ~55 s (64 x 65536 vueltas de 13 ciclos): la unidad
+                        ; puede tardar en hacer RFD (lee o escribe un sector)
         bne @wr
         jmp @tmout      ; timeout RFD
 @ready: bit KEOIF       ; CLOCK ya esta alto desde RTS
@@ -1680,7 +1707,7 @@ KISEND: sta KBSOUR2
 @tmndp: lda KSTATUS
         ora #$80        ; bit7: dispositivo no presente
 @tmend: sta KSTATUS
-        cli
+        plp
         sec
         rts
 @noeoi: jsr KCLKLO
@@ -1710,7 +1737,7 @@ KISEND: sta KBSOUR2
         bne @fr
         jmp @tmout      ; timeout de frame-ack
 @ok:    lsr KEOIF
-        cli
+        plp
         clc
         rts
 
@@ -1740,7 +1767,8 @@ KSDLY:  txa
 ; ACPTR ($FFA5): recibir un byte del talker. Espejo de KISEND.
 ; Dato valido con CLOCK alto. EOI -> bit6 de KSTATUS. C=1 si timeout.
 ; Estado de entrada (tras TKSA): oyente con DATA bajo, talker con CLOCK bajo.
-KACPTR: sei
+KACPTR: php                 ; sin IRQ durante el byte; al salir se
+        sei                 ; restaura la I del llamante
         ; 1) Esperar CLOCK alto (talker suelta CLOCK = RTS). El talker lo
         ;    mantiene alto hasta ver nuestro RFD, asi que es estable.
         lda #$00
@@ -1756,32 +1784,32 @@ KACPTR: sei
         bne @w1
         inc KSERHI
         lda KSERHI
-        cmp #$40            ; ~58ms: el 1541 puede tardar en preparar el byte
-        bne @w1
+        cmp #$40            ; ~55 s (64 x 65536 vueltas de 13 ciclos): la
+        bne @w1             ; unidad puede estar leyendo un sector
         jmp @to             ; dispositivo no presente
 @rfd:   jsr KDATHI          ; soltar DATA = RFD (listo para datos)
         ; 2) Esperar CLOCK bajo (el talker baja CLOCK para empezar los bits).
-        ;    Si retiene CLOCK alto mas de ~256us -> EOI (ultimo byte).
-        ldx #$00
-        ldy #$00
+        ;    Si retiene CLOCK alto mas de 200 us -> EOI (ultimo byte). Ventana
+        ;    de 20 vueltas de 13 ciclos: ~260 us.
+        ldy #20
 @w2:    lda SERPRT
         and #B_CLKIN
         beq @rdy            ; CLOCK bajo -> vienen bits
-        iny
-        bne @w2
-        inx
+        dey
         bne @w2
         ; --- EOI: el talker retiene CLOCK = ultimo byte ---
         lda KSTATUS
         ora #$40
         sta KSTATUS         ; senalar EOI
-        jsr KDATLO          ; pulso de reconocimiento de EOI (~60us)
+        jsr KDATLO          ; pulso de reconocimiento de EOI (~185 us; >= 60 us)
         ldx #$20
 @eod:   dex
         bne @eod
         jsr KDATHI
-        lda #$00
-        sta KSERHI
+        ; Tras el reconocimiento el talker baja CLOCK en unos 60 us. Si no lo
+        ; baja en ~0,85 s (65536 vueltas de 13 ciclos) no hay byte: timeout
+        ; de lectura (ST bit1). Es lo que ve el C64 con un fichero inexistente:
+        ; ST = $42 (EOI + timeout), del que LOAD saca FILE NOT FOUND.
         ldx #$00
         ldy #$00
 @w2b:   lda SERPRT          ; ahora si, esperar CLOCK bajo (empiezan los bits)
@@ -1791,12 +1819,11 @@ KACPTR: sei
         bne @w2b
         inx
         bne @w2b
-        inc KSERHI
-        lda KSERHI
-        cmp #$40            ; ~58ms sin byte tras EOI = fin real (mas alla del ultimo)
-        bne @w2b
-        lda #$00            ; sin byte valido; KSTATUS ya tiene bit6 (EOI)
-        cli
+        lda KSTATUS
+        ora #$02            ; bit1: timeout de lectura
+        sta KSTATUS
+        plp
+        lda #$00            ; sin byte valido
         sec
         rts
 @rdy:   lda #$08
@@ -1827,13 +1854,13 @@ KACPTR: sei
 @nxt:   dec KBITCNT
         bne @bit
         jsr KDATLO          ; reconocer byte recibido (DATA bajo)
+        plp
         lda KBSOUR2
-        cli
         clc
         rts
 @to:    lda #$80
         sta KSTATUS         ; timeout: dispositivo no presente
-        cli
+        plp
         sec
         rts
 
@@ -2233,7 +2260,6 @@ KLOAD:  sta KVERCK
         iny
         bne @nm
 @nmend: jsr KUNLSN
-        jsr KLDGMSG         ; "LOADING" / "VERIFYING" si los mensajes ON
         ; 2) TALK + TKSA ($60) para leer
         lda KFA
         jsr KTALK
@@ -2248,6 +2274,19 @@ KLOAD:  sta KVERCK
         rts
 @addr:  ; leer la direccion de carga del fichero (2 bytes)
         jsr KACPTR
+        pha                 ; byte bajo (KLDGMSG usa temporales del BASIC)
+        lda KSTATUS
+        and #$02            ; timeout de lectura en el primer byte: la unidad
+        beq @addr2          ; no tiene el fichero
+        pla
+        jsr KUNTLK
+        lda #$04            ; error 4: FILE NOT FOUND
+        sec
+        rts
+@addr2: jsr KLDGMSG         ; "LOADING" / "VERIFYING": solo si el fichero
+                            ; existe, como en el C64 (el bus espera: el
+                            ; talker aguarda nuestro RFD sin limite)
+        pla
         sta KLDTMP
         jsr KACPTR          ; A = byte alto
         ldx KSA
