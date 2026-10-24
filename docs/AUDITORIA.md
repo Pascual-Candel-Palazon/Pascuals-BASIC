@@ -95,6 +95,8 @@ A efectos del repo actual cuenta como GAP.
 | 648: el editor escribia siempre en $0400 | TEST + VICE (ROM original) | Base de pantalla, limites del cursor, color y scroll siguen a 648. tests/test_pagina648.py. |
 | CHKIN/CHKOUT devolvian en X el indice de la tabla | TEST + VICE (ROM original) | El BASIC hace STX CHANNL: con el primer fichero abierto CHANNL quedaba a 0 e INPUT# escribia "? ". tests/test_canales.py. |
 | Cabecera de cinta en 828 (192 bytes) | TEST + VICE (ROM original) | Antes 21 bytes en $0362. El estado de la cinta sale del bufer. tests/test_cinta.py. |
+| SYS no usaba 780-783 | TEST + VICE (ROM original) | Ahora carga A/X/Y/P antes de saltar y los guarda al volver. `POKE780,65:SYS65490` imprime "A". tests/test_sysregs.py. |
+| RAMTAS no limpiaba la pagina 3 | TEST + VICE (ROM original) | Tras el arranque 780-783 y el resto de $0300-$03FF quedaban con lo que hubiera en la RAM. tests/test_sysregs.py. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

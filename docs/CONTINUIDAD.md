@@ -1272,4 +1272,50 @@ $BFE8).
 
 Visto de paso y NO corregido: SYS no carga A/X/Y/P desde 780-783 ni los
 guarda al volver (en la ROM original `POKE780,65:SYS65490` imprime "A";
-en la libre no).
+en la libre no). Corregido en la seccion 23.
+
+## 23. SYS con 780-783 y RAMTAS limpia la pagina 3 (24 oct 2026)
+
+Fuente: interfaz publica (nivel B). Programmer's Reference Guide y
+Mapping the C64: 780-783 ($030C-$030F) son A, X, Y y el registro de
+estado para SYS; RAMTAS limpia $0000-$0101 y $0200-$03FF. Las dos cosas
+se reprodujeron antes de tocar nada y se compararon con la ROM original
+en VICE como caja negra (pantalla y memoria).
+
+1. **SYS no usaba 780-783.** `KSYS` saltaba con `JMP (POKER)` sin cargar
+   ni guardar registros: `POKE780,65:SYS65490` imprimia "." (lo que
+   hubiera en A) en vez de "A". Ahora `KSYS` llama a `@call`, que carga
+   Y, X, P (por la pila) y A desde 780-783 y hace PLP justo antes del
+   `JMP (POKER)`; al volver el RTS del usuario, PHP y guarda Y, X, A y P.
+   El RTS final vuelve a NEWSTT como antes. +32 bytes.
+2. **RAMTAS no limpiaba la pagina 3.** Tras el arranque, 780/781 y el
+   resto de $0300-$03FF quedaban con lo que hubiera en la RAM (en VICE,
+   $FF en varias posiciones; la original deja 0). Una linea mas en el
+   bucle de la pagina 2. Es seguro: el arranque es IOINIT, RAMTAS,
+   RESTOR, CINT (el orden del C64) y nada escribe la pagina 3 antes de
+   RAMTAS; los vectores los pone RESTOR despues. +3 bytes.
+
+Caja negra en VICE, misma secuencia con la original y la libre (780-783
+y 900/901 tras cada caso):
+
+| Caso | Original | Libre antes | Libre ahora |
+|------|----------|-------------|-------------|
+| `POKE780,65:SYS65490:PRINT"#"` | "A#", 41 00 00 30 | ".#" | "A#", 41 00 00 30 |
+| rutina LDA/LDX/LDY/SEC/RTS en 828 | 12 34 56 31 | 00 00 00 (sin guardar) | 12 34 56 31 |
+| X/Y de entrada (781=7, 782=9) | 900/901 = 7 9 | 0 0 | 7 9 |
+| C de entrada (783=1 / 783=0) | 900 = 1 / 0 | 99 / 99 | 1 / 0 |
+| tras el arranque | 00 00 00 00, 900 = 0 | FF FF 00 00, 900 = 255 | 00 00 00 00, 900 = 0 |
+
+783 guarda tambien los bits 4 y 5 ($30), como deja PHP; coincide con la
+original.
+
+Similitud: la primera version de `KSYS` (cargar A, X, Y en ese orden y
+guardar A, X, Y) coincidia entera con el original en el comparador ciego
+(15 y 17 bytes). Las direcciones las impone la interfaz, el orden no:
+se cambio a Y, X, A y ya no coincide. Detalle en AUDITORIA_SIMILITUD.md.
+
+Test: `tests/test_sysregs.py` (9 casos; falla con el build anterior; el
+caso del arranque llena la pagina 3 de $FF antes del RESET porque el
+arnes arranca con la RAM a cero).
+
+Espacio: KERNAL libre 118 -> 83 bytes.

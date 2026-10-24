@@ -230,3 +230,19 @@ SHIFT+RUN/STOP, comportamiento documentado) seguido del hueco libre de la
 seccion, relleno con $00. El hueco crecio al pasar el estado de la cinta
 a pagina cero, y la coincidencia crece con el. VIC-20: 0,012 (maximo 89,
 la misma zona). DOS 1541: 0,005.
+
+## Repeticion tras SYS con 780-783 y RAMTAS (24 oct 2026)
+
+Antes de este cambio (HEAD a01783b): propio vs C64 KERNAL Jaccard 0,024;
+560 bytes (7,3 %) en coincidencias de 8 o mas; maximo 55. Despues:
+Jaccard 0,024; 528 bytes (6,8 %); maximo 54. VIC-20: 0,012 (253 bytes,
+maximo 26). DOS 1541: 0,005.
+
+La primera version de KSYS coincidia entera con el original: 15 bytes
+(guardar A, X, Y y P al volver) y 17 bytes (cargarlos antes de saltar).
+Las direcciones 780-783 las impone la interfaz publica, pero el orden de
+las cargas y los guardados no; con el orden Y, X, A ya no hay ninguna
+coincidencia en KSYS. La bajada total viene de la zona tras KSRTAB: la
+seccion crece 32 bytes y el hueco relleno de $00 que la seguia (y que
+coincidia con el original) pasa de 55 a 23 bytes de coincidencia. La
+linea anadida a RAMTAS no aparece en el listado de coincidencias.

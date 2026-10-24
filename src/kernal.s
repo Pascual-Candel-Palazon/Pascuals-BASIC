@@ -2490,10 +2490,30 @@ KIOM2:  .byte "FILE OPEN",0
 ; ------------------------------------------------------------
 ; SYS (delta C64): evalua la expresion con las rutinas del BASIC
 ; y salta a la direccion; un RTS alli devuelve al BASIC.
+; Interfaz publica del C64 (nivel B): antes de saltar carga A, X, Y
+; y el registro de estado desde 780-783; al volver los guarda alli.
 ; ------------------------------------------------------------
+SAREG   = $030C         ; 780: A para SYS
+SXREG   = $030D         ; 781: X
+SYREG   = $030E         ; 782: Y
+SPREG   = $030F         ; 783: registro de estado
 KSYS:   jsr FRMNUM      ; evaluar la expresion tras SYS
         jsr GETADR      ; convertir a entero en POKER
-        jmp (POKER)     ; el RTS del usuario vuelve a NEWSTT
+        jsr @call       ; el RTS del usuario vuelve aqui
+        php             ; P de salida, antes de que nada la toque
+        sty SYREG
+        stx SXREG
+        sta SAREG
+        pla
+        sta SPREG
+        rts             ; a NEWSTT
+@call:  ldy SYREG
+        ldx SXREG
+        lda SPREG
+        pha
+        lda SAREG
+        plp             ; P de 783 justo antes de saltar
+        jmp (POKER)
 
 ; ------------------------------------------------------------
 ; KERRMSG (delta C64): imprime el mensaje LARGO de error del BASIC.
@@ -3924,7 +3944,7 @@ KRESTOR:
 .org $FD50
 
 ; ------------------------------------------------------------
-; RAMTAS ($FF87): limpiar areas de trabajo y reloj
+; RAMTAS ($FF87): limpiar areas de trabajo (paginas 0, 2 y 3) y reloj
 ; ------------------------------------------------------------
 KRAMTAS:
         lda #$00
@@ -3934,6 +3954,8 @@ KRAMTAS:
         inx
         bne @rt1
 @rt2:   sta $0200,X     ; pagina 2 (bufers)
+        sta $0300,X     ; pagina 3 (interfaz publica: RAMTAS limpia
+                        ; $0200-$03FF); los vectores los pone RESTOR despues
         inx
         bne @rt2
         sta KTIME       ; reloj jiffy a cero
