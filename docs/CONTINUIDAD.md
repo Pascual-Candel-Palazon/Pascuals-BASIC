@@ -1354,8 +1354,38 @@ TI la espera de 0,85 s parecia de ~40 ms.
 `LOAD"NOEXISTE",8` sigue dando ?FILE NOT FOUND con las dos unidades, y
 LOAD de un fichero que existe carga bien (VICE).
 
-Diferencia que queda y NO se toca aqui: un GET# normal es mas lento en la
-libre (unos 40 ms con la 1541 libre y 29 ms con la original, frente a 27
-y 16 ms en la original). La diferencia esta en el direccionamiento (TALK,
-TKSA, UNTALK), no en `@w2b`; la diferencia que queda en el GET# fallido
-es esa misma.
+Un GET# normal tambien era mas lento en la libre; se corrige en la
+seccion 25.
+
+## 25. Respuesta a ATN: esperar a verla, no 5 ms fijos (25 oct 2026)
+
+Un GET# normal tardaba en la libre unos 40 ms con la 1541 libre y 29 ms
+con la original, frente a 27 y 16 ms en la ROM original (TOD del CIA1,
+200 GET#). Cada GET# direcciona dos veces (TALK al abrir el canal,
+UNTALK al cerrarlo) y en las dos `KATNDLY` esperaba ~5,2 ms fijos (4 x
+256 vueltas de 5 ciclos): ~10 ms por byte.
+
+Especificacion publica (Butterfield, COMPUTE! n. 38): con ATN asertado,
+los dispositivos asertan DATA en menos de 1 ms. Ahora `KATNDLY` suelta
+nuestra DATA y espera a verla baja, con el mismo limite de ~5 ms (385
+vueltas de 13 ciclos). Sale en cuanto un dispositivo responde. Lo demas
+no cambia: LISTEN/TALK sigue marcando ST bit7 si a los ~5 ms nadie ha
+respondido, y KISEND sigue esperando a que todos suelten DATA (RFD)
+antes de mandar.
+
+Soltar DATA antes de muestrear importa en UNTALK: alli la teniamos baja
+(reconocimiento del ultimo byte recibido) y sin soltarla se veria a si
+misma. LISTEN/TALK ya la soltaba.
+
+| 200 GET# normales | Antes | Ahora | ROM original |
+|-------------------|-------|-------|--------------|
+| con la 1541 libre | 7,9 s | 5,5 s | 5,4 s |
+| con la 1541 original | 5,8 s | 3,4 s | 3,2 s |
+
+20 GET# a un fichero inexistente: 1,4 -> 1,2 s (libre) y 2,4 -> 2,1 s
+(original); la ROM original, 0,8 y 1,8 s.
+
+Prueba de estres en VICE (4 escrituras de 50 registros con PRINT# y 20
+lecturas de 50 con INPUT#, comprobando cada registro y ST): 1000 de 1000
+correctos y ningun ST anomalo con la 1541 libre y con la original; el
+host original como control da lo mismo.

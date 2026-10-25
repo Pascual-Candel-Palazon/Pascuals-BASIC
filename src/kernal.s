@@ -1543,18 +1543,27 @@ KSECND: php
         jsr KATNHI      ; liberar ATN: empieza la fase de datos
         jmp KPLPC
 
-; retardo de respuesta a ATN (~5 ms: 4 x 256 vueltas de 5 ciclos)
+; espera de respuesta a ATN: con ATN y CLOCK asertados, soltar nuestra
+; DATA y esperar a que un dispositivo la aserte (especificacion publica:
+; lo hace en menos de 1 ms). Sale en cuanto la ve baja; si no, a los
+; ~5 ms (385 vueltas de 13 ciclos: X:Y de $FE:$7F a $00:$00). Antes era
+; una espera fija de ~5 ms, dos por cada GET# o INPUT# (TALK y UNTALK).
+; Conserva X e Y; destruye A.
 KATNDLY:txa
         pha
         tya
         pha
-        ldx #$04
-@o:     ldy #$00
-@i:     dey
-        bne @i
-        dex
-        bne @o
-        pla
+        jsr KDATHI      ; en UNTALK la teniamos baja (ack del ultimo byte)
+        ldx #$FE
+        ldy #$7F
+@w:     lda SERPRT
+        and #B_DATIN
+        beq @fin        ; DATA bajo: el dispositivo ha respondido a ATN
+        iny
+        bne @w
+        inx
+        bne @w
+@fin:   pla
         tay
         pla
         tax
