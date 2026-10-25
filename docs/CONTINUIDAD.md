@@ -172,16 +172,16 @@ xvfb-run -a x64sc -default \
   mete `LOAD`+CR+`RUN`+CR en el bufer). Fuente: comportamiento publico
   (sta.c64.org). test_keymods: 64 casos.
 - SETTMO ($FFA2): guarda A en KTIMOUT ($0285); antes era un stub.
-- BLOAD (43f1eba): si una carga relocalizada deja menos de 2 bytes, fuerza
+- BLOAD (d9592d9): si una carga relocalizada deja menos de 2 bytes, fuerza
   un programa vacio ($00 $00) antes de LNKPRG. Validado en VICE el 21 oct
   (seccion 20).
-- KUNLSN (b876e1c): el $3F se cargaba antes de KATNLO/KCLKLO/KATNDLY, que
+- KUNLSN (8f2ef8f): el $3F se cargaba antes de KATNLO/KCLKLO/KATNDLY, que
   destruyen A; ahora se recarga justo antes de KISEND. Verificado en
   simulacion dual C64+1541 y en VICE (dos `LOAD"$",8` sin disco seguidos
   vuelven a READY).
-- 20 oct: `bin/` regenerado (estaba parado desde af65a4e) y bit de
+- 20 oct: `bin/` regenerado (estaba parado desde 40794a5) y bit de
   ejecucion restaurado en build.sh y tests/run_all.sh.
-- 21 oct: SAVE de cinta arreglado (llevaba roto desde 726cbda: el codigo
+- 21 oct: SAVE de cinta arreglado (llevaba roto desde d9b4855: el codigo
   crecio por encima del trampolin de $FD15 y el build lo piso sin avisar) y
   RAMTAS deja de escribir 0 en $00/$01 (`sta $0002,X` en modo pagina cero
   daba la vuelta). El build aborta ahora si dos secciones .org se solapan.
@@ -690,7 +690,7 @@ es lento; usar ficheros sueltos con `timeout` para regresion rapida.
 ## 12. Pendiente de recuperar (trabajo hecho fuera del repo y perdido)
 
 Inventario de la auditoria del 20 oct 2026. Se busco en GitHub, en el
-clon local (C:\repo, parado en 4207426) y en Descargas/Escritorio: nada
+clon local (C:\repo, parado en 85b9e4f) y en Descargas/Escritorio: nada
 de esto existe ya como fichero. Queda el registro de lo que se hizo, que
 permite rehacerlo.
 
@@ -744,14 +744,14 @@ algunos commits queda corregido aqui:
 
 | Commit | Dice | Realidad |
 |--------|------|----------|
-| b324db0 | "Update" | Cambio de permisos hecho desde Windows: quito el bit de ejecucion a build.sh y tests/run_all.sh. Corregido el 20 oct. |
-| 020c21c, 97bae4e | "Update README.md" | Editados en la web: anaden la captura de pantalla; el segundo dejo la imagen pegada a "## Status" y rompio el titulo. Corregido el 20 oct. |
-| 9624179 .. b876e1c | (no lo mencionan) | Cambiaron src/kernal.s sin regenerar bin/: las ROMs publicadas quedaron desfasadas hasta el 20 oct. |
-| 43f1eba | "Pendiente de validacion en VICE" | Validado el 21 oct (seccion 20). |
-| b876e1c | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
-| 4207426 | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (60a09ac, af65a4e) con los tres commits hechos en la web; sin conflictos. |
+| 1327e13 | "Update" | Cambio de permisos hecho desde Windows: quito el bit de ejecucion a build.sh y tests/run_all.sh. Corregido el 20 oct. |
+| c54e4fc, 6a84aed | "Update README.md" | Editados en la web: anaden la captura de pantalla; el segundo dejo la imagen pegada a "## Status" y rompio el titulo. Corregido el 20 oct. |
+| f46a872 .. 8f2ef8f | (no lo mencionan) | Cambiaron src/kernal.s sin regenerar bin/: las ROMs publicadas quedaron desfasadas hasta el 20 oct. |
+| d9592d9 | "Pendiente de validacion en VICE" | Validado el 21 oct (seccion 20). |
+| 8f2ef8f | `#\$3F`, `"\$",8` | Las barras invertidas son un escape que se colo en el mensaje: se refiere a `#$3F` y `LOAD"$",8`. |
+| 85b9e4f | "Merge branch 'main' of d:/pascuals-basic.bundle" | Merge de los commits de la sesion de banner (cbf97d3, 40794a5) con los tres commits hechos en la web; sin conflictos. |
 | rama fix-bload-guard | | Ya fusionada (PR #1). Se puede borrar en GitHub. |
-| 726cbda | "Implementar SHIFT+RUN/STOP" | Sin saberlo, empujo el codigo por encima de $FD15 y rompio el SAVE de cinta (corregido el 21 oct en 930c9b9). |
+| d9b4855 | "Implementar SHIFT+RUN/STOP" | Sin saberlo, empujo el codigo por encima de $FD15 y rompio el SAVE de cinta (corregido el 21 oct en 946acdd). |
 
 ---
 
@@ -960,7 +960,7 @@ Espacio: el editor no cabia en su seccion. Se hizo sitio asi:
    no salia por suerte de tiempos. Ahora el bucle llena una cola de 3
    pulsos (wqlo/wqhi, indices wqh/wqt) y el manejador la vacia, asi que
    los picos de calculo no llegan al timer. El fallo estaba latente desde
-   la version que se subio en 60fe54c. tests/test_cinta.py comprueba que
+   la version que se subio en 24320a6. tests/test_cinta.py comprueba que
    la cola nunca se vacia antes del final.
 
 KERNAL libre: 28 bytes.
@@ -1150,7 +1150,7 @@ Diferencia que queda: tras leer el final de un fichero, un GET# mas deja
 ST=64 en nuestra ROM y ST=66 (fin de fichero + tiempo agotado) en la
 original.
 
-**Guarda de BLOAD (43f1eba), validada en VICE.** Con un programa en
+**Guarda de BLOAD (d9592d9), validada en VICE.** Con un programa en
 memoria (`10 PRINT"VIEJO"`, `20 GOTO 10`) y la 1541:
 - PRG de 1 byte de datos: nuestra ROM deja un programa vacio (LIST no
   muestra nada, FRE(0) da -26627, es decir 38909 libres) y se puede
@@ -1228,7 +1228,7 @@ disco leido con c1541).
    `KUNLSN` y `KUNTLK` bajaban ATN con IRQ activas antes de bajar CLK. Si
    el IRQ del teclado caia tras soltar CLK, el C64 no veia el pulso de CLK
    con el que la unidad toma el bus y `@tw` daba ST=$80.
-   Reproduccion: dos.bin de Pascual_DOS-1541 6cf8010 sin el bucle `@hold`
+   Reproduccion: dos.bin de Pascual_DOS-1541 02a4b64 sin el bucle `@hold`
    de `iec_turnaround`, 20 pasadas de INPUT# sobre un SEQ de 50 registros
    mirando ST tras cada INPUT#: 7 lecturas con ST=-128 (128) y 868 de
    1000 registros buenos. La ROM original con esa misma unidad: 1000 de

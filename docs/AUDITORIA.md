@@ -26,7 +26,7 @@ Leyenda:
 | tope del sondeo en $A000 | TEST | "38911 BYTES FREE" exacto. |
 | USRPOK=$0310 | TEST + VICE | test_basic: USR(7)->7. (Antes solo afirmado; ahora probado.) |
 | SYS -> KSYS | VICE + MECH | Borde arcoiris por SYS; KSYS reubicado tras detectar ensamblado fuera de $FFFF. |
-| candado anti-PEEK eliminado | TEST + VICE | test_basic: PEEK($A000) devuelve el byte real de la ROM (el candado daba 0). Era 117 al escribir esta tabla; desde 6332db5 $A000 guarda el vector frio del BASIC y vale 138. El test lee el valor esperado de la propia imagen. |
+| candado anti-PEEK eliminado | TEST + VICE | test_basic: PEEK($A000) devuelve el byte real de la ROM (el candado daba 0). Era 117 al escribir esta tabla; desde 00be7c3 $A000 guarda el vector frio del BASIC y vale 138. El test lee el valor esperado de la propia imagen. |
 | FPWRT JEQ | MECH | Forzado por error real de rango del ensamblador. |
 | fixup DEL en INLIN | **RETIRADO** (21 oct) | No era inofensivo: INLIN si ve $14 cuando es un caracter de verdad (DEL incrustado con INST en comillas, o un byte de un fichero en INPUT#). Con la 1541 en VICE, INPUT# de "AB"+CHR$(20)+"CD" daba "ACD"; el C64 da los 5. Con el teclado no se notaba porque CHRIN de pantalla devuelve X con su propio indice. CONTINUIDAD sec. 20. |
 

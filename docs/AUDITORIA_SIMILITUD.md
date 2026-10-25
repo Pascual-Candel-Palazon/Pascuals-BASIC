@@ -1,7 +1,7 @@
 # AUDITORIA_SIMILITUD.md: no-similitud con la ROM original
 
 Fecha: 20 oct 2026. Objeto: `bin/kernal_c64.bin` (sha256 `4acb5cba...`,
-compilado desde 45da60d, estado de GitHub a 3 jul) y `bin/basic_c64.bin`.
+compilado desde 99b8fd4, estado de GitHub a 3 jul) y `bin/basic_c64.bin`.
 
 Este informe NO sustituye la verificacion por un tercero que exige la
 regla 2 de `PROCEDENCIA.md`. La hizo el propio entorno de desarrollo, con
