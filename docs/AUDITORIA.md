@@ -97,6 +97,7 @@ A efectos del repo actual cuenta como GAP.
 | Cabecera de cinta en 828 (192 bytes) | TEST + VICE (ROM original) | Antes 21 bytes en $0362. El estado de la cinta sale del bufer. tests/test_cinta.py. |
 | SYS no usaba 780-783 | TEST + VICE (ROM original) | Ahora carga A/X/Y/P antes de saltar y los guarda al volver. `POKE780,65:SYS65490` imprime "A". tests/test_sysregs.py. |
 | RAMTAS no limpiaba la pagina 3 | TEST + VICE (ROM original) | Tras el arranque 780-783 y el resto de $0300-$03FF quedaban con lo que hubiera en la RAM. tests/test_sysregs.py. |
+| Espera tras el EOI de ~0,85 s | VICE (ROM original, TOD) | `@w2b` a ~13 ms: 20 GET# a un fichero inexistente, 19,4 s -> 1,4 s. CONTINUIDAD sec. 24. |
 
 
 ## Huecos de compatibilidad encontrados en esta auditoria

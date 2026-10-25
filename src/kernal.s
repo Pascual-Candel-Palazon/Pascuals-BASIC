@@ -1806,12 +1806,15 @@ KACPTR: php                 ; sin IRQ durante el byte; al salir se
 @eod:   dex
         bne @eod
         jsr KDATHI
-        ; Tras el reconocimiento el talker baja CLOCK en unos 60 us. Si no lo
-        ; baja en ~0,85 s (65536 vueltas de 13 ciclos) no hay byte: timeout
-        ; de lectura (ST bit1). Es lo que ve el C64 con un fichero inexistente:
-        ; ST = $42 (EOI + timeout), del que LOAD saca FILE NOT FOUND.
-        ldx #$00
-        ldy #$00
+        ; Tras el reconocimiento el talker baja CLOCK en menos de 60 us
+        ; (especificacion publica; medido en VICE: <30 us con la 1541 libre y
+        ; con la original). Si no lo baja en ~13 ms (1000 vueltas de 13
+        ; ciclos) no hay byte: timeout de lectura (ST bit1). Es lo que ve el
+        ; C64 con un fichero inexistente: ST = $42 (EOI + timeout), del que
+        ; LOAD saca FILE NOT FOUND. Cuenta X:Y hasta $00:00 desde $FC:$18:
+        ; (256-$18) + 3*256 = 1000 vueltas.
+        ldx #$FC
+        ldy #$18
 @w2b:   lda SERPRT          ; ahora si, esperar CLOCK bajo (empiezan los bits)
         and #B_CLKIN
         beq @rdy

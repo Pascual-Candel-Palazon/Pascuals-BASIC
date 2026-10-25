@@ -1319,3 +1319,43 @@ caso del arranque llena la pagina 3 de $FF antes del RESET porque el
 arnes arranca con la RAM a cero).
 
 Espacio: KERNAL libre 118 -> 83 bytes.
+
+## 24. Espera tras el reconocimiento de EOI: de ~0,85 s a ~13 ms (24 oct 2026)
+
+`KACPTR @w2b` espera, tras el reconocimiento del EOI, a que el talker baje
+CLOCK para mandar el ultimo byte. Si no lo baja no hay byte: ST bit1
+(timeout de lectura), que con EOI da ST=$42; es lo que ve el C64 con un
+fichero inexistente y de lo que LOAD saca FILE NOT FOUND. La espera era
+de 65536 vueltas (~0,85 s); ahora son 1000 vueltas de 13 ciclos (~13 ms).
+
+Fundamento:
+- Especificacion publica (Butterfield, COMPUTE! n. 38): tras el
+  reconocimiento el talker baja CLOCK "within 60 microseconds".
+- Medido en VICE con un build temporal que contaba las vueltas de
+  `@w2b` en 110 EOI reales (100 lecturas del canal 15 y 10 finales de
+  fichero SEQ): maximo 2 vueltas (~26 us) con la 1541 libre y 0 con la
+  original. 13 ms es mas de 200 veces la especificacion.
+- La original, como caja negra, tarda en un GET# fallido unos 13 ms mas
+  que en uno normal (con la 1541 libre; resolucion de unos 5 ms).
+
+Medidas con el reloj TOD del CIA1. Ojo: TI no sirve para esto, porque el
+reloj jiffy no avanza mientras KACPTR corre con las IRQ desactivadas; con
+TI la espera de 0,85 s parecia de ~40 ms.
+
+| Host / 1541 | 20 GET# a un fichero inexistente | 200 GET# normales |
+|-------------|------------------|-------------------|
+| original / libre | 0,8 s | 5,4 s |
+| original / original | 1,8 s | 3,2 s |
+| libre antes / libre | 19,4 s | 7,9 s |
+| libre antes / original | 20,4 s | 5,8 s |
+| libre ahora / libre | 1,4 s | 7,9 s |
+| libre ahora / original | 2,4 s | 5,8 s |
+
+`LOAD"NOEXISTE",8` sigue dando ?FILE NOT FOUND con las dos unidades, y
+LOAD de un fichero que existe carga bien (VICE).
+
+Diferencia que queda y NO se toca aqui: un GET# normal es mas lento en la
+libre (unos 40 ms con la 1541 libre y 29 ms con la original, frente a 27
+y 16 ms en la original). La diferencia esta en el direccionamiento (TALK,
+TKSA, UNTALK), no en `@w2b`; la diferencia que queda en el GET# fallido
+es esa misma.
