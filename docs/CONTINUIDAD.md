@@ -41,7 +41,7 @@ Niveles de procedencia para CUALQUIER aportacion:
   descargar ni volcar la ROM de Commodore.** Nunca mirar desensamblados
   de BASIC 3.5/7.0 ni del KERNAL/DOS de Commodore.
 
-Antes de publicar: consulta pendiente a un abogado de PI.
+Consulta a un abogado de PI: hecha (25 oct 2026), con su conformidad.
 
 ---
 
@@ -643,8 +643,7 @@ tocar el upstream):
   jiffies. Verificado: `TI` avanza, `TI$` formatea HHMMSS, y `TI$="123456"`
   fija el reloj (round-trip exacto, ti=2717760 jiffies).
 
-Pendiente general: consulta a abogado de PI antes de publicar. CTRL+letra
-sin asignar es deliberado.
+CTRL+letra sin asignar es deliberado.
 
 NOTA de test py65: `test_iec_fase1.py` "CLOSE compacta" ahora prueba la
 compactacion de tablas con dispositivos NO-serie (dev 0), porque CLOSE de
